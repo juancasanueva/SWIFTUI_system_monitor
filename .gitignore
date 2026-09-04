@@ -1,0 +1,12 @@
+# Local AI runtime state
+.atl/
+
+# macOS
+.DS_Store
+
+# Xcode
+xcuserdata/
+*.xcuserstate
+DerivedData/
+build/
+*.xcscmblueprint

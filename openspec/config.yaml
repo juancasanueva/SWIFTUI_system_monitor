@@ -1,0 +1,99 @@
+# openspec/config.yaml — SDD configuration for system-monitor
+schema: spec-driven
+
+project: system-monitor
+artifact_store: hybrid # OpenSpec files under openspec/ AND Engram observations
+execution_mode: auto
+delivery_strategy: single-pr
+review_budget_lines: unlimited
+strict_tdd: true
+
+context: |
+  Tech stack: Swift + SwiftUI + AppKit (NSStatusItem, NSPopover), Xcode project, macOS menu bar app (LSUIElement).
+  Architecture: Hexagonal / Screaming — App, Domain (Models, Ports), Application, Infrastructure, Presentation.
+  Testing: Swift Testing (@Test, #expect) in system-monitorTests; XCTest/XCUITest only in system-monitorUITests.
+  Concurrency: SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor, SWIFT_APPROACHABLE_CONCURRENCY = YES; providers nonisolated + Sendable.
+  Style: value-type Sendable snapshots in Domain; @Observable @MainActor state in Application; container/presentational views.
+  Product source of truth: PRD.md at the repository root (v1 = CPU + RAM only; GPU deferred to v2).
+
+projects:
+  - path: .
+    stack: Swift / SwiftUI / AppKit macOS app (Xcode project)
+    project_file: system-monitor.xcodeproj
+    scheme: system-monitor
+    deployment_target: "app target 15.0; project and test targets 26.5"
+    swift_version: "5.0 (SWIFT_VERSION build setting)"
+    test_command: "xcodebuild -project system-monitor.xcodeproj -scheme system-monitor -destination 'platform=macOS' -quiet test"
+    unit_test_command: "xcodebuild -project system-monitor.xcodeproj -scheme system-monitor -destination 'platform=macOS' -quiet test -only-testing:system-monitorTests"
+    build_command: "xcodebuild -project system-monitor.xcodeproj -scheme system-monitor -destination 'platform=macOS' -quiet build"
+    framework: Swift Testing (unit), XCTest/XCUITest (UI)
+    coverage_command: "" # not configured
+    linter: "swiftlint (installed at /opt/homebrew/bin/swiftlint, no .swiftlint.yml in repo, not wired into the build)"
+    type_checker: "swiftc via xcodebuild build"
+    formatter: "" # swift-format / swiftformat not installed
+
+testing:
+  strict_tdd: true
+  workspace_test_command: "xcodebuild -project system-monitor.xcodeproj -scheme system-monitor -destination 'platform=macOS' -quiet test"
+  fast_unit_command: "xcodebuild -project system-monitor.xcodeproj -scheme system-monitor -destination 'platform=macOS' -quiet test -only-testing:system-monitorTests"
+  build_command: "xcodebuild -project system-monitor.xcodeproj -scheme system-monitor -destination 'platform=macOS' -quiet build"
+  unit:
+    available: true
+    tool: Swift Testing
+    target: system-monitorTests
+    module_import: "@testable import system_monitor"
+  integration:
+    available: true
+    tool: Swift Testing with real Mach/sysctl APIs, tagged .integration
+    note: Infrastructure adapters assert shape only (core count > 0, total memory > 0).
+  e2e:
+    available: true
+    tool: XCUITest
+    target: system-monitorUITests
+  coverage:
+    available: false
+    note: Enable code coverage on the scheme test action before asserting a threshold.
+  targets:
+    domain_application_coverage: "80%+ (PRD section 8); Infrastructure exempt"
+
+skills:
+  recommended:
+    - /Users/juancasanueva/.config/opencode/skills/swift-testing/SKILL.md
+    - /Users/juancasanueva/.config/opencode/skills/swiftui-patterns/SKILL.md
+    - /Users/juancasanueva/.config/opencode/skills/swift-concurrency-6-2/SKILL.md
+    - /Users/juancasanueva/.config/opencode/skills/swift-protocol-di-testing/SKILL.md
+  registry: .atl/skill-registry.md
+
+rules:
+  proposal:
+    - Reference the PRD feature ID (F1..F9) and milestone (M1..M4) the change serves.
+    - Keep GPU work out of v1 scope; it belongs to PRD section 11 (v2).
+    - Include a rollback plan for changes that touch the status item lifecycle or sampling loop.
+  specs:
+    - Use Given/When/Then for scenarios.
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY).
+    - State the layer each requirement belongs to (Domain, Application, Infrastructure, Presentation).
+  design:
+    - Respect the hexagonal boundary: Domain imports Foundation only; Presentation never touches Mach or IOKit.
+    - Define a Domain port protocol before any Infrastructure adapter.
+    - Document Sendable and actor-isolation decisions for every new type crossing a task boundary.
+  tasks:
+    - Group by phase, use hierarchical numbering.
+    - Every implementation task pairs with a failing test task first (Strict TDD).
+    - Keep tasks completable in one session.
+  apply:
+    guidelines:
+      - Follow the existing App/Domain/Application/Infrastructure/Presentation layout.
+      - Swift source files are picked up automatically by PBXFileSystemSynchronizedRootGroup; do not edit project.pbxproj to add files.
+      - Use Swift Testing (@Test, #expect) for new unit tests; never add XCTest assertions to system-monitorTests.
+      - vm_deallocate any buffer returned by host_processor_info.
+      - Do not commit; the repository has no commits yet and delivery is user-owned.
+    tdd: true
+    test_command: "xcodebuild -project system-monitor.xcodeproj -scheme system-monitor -destination 'platform=macOS' -quiet test -only-testing:system-monitorTests"
+  verify:
+    test_command: "xcodebuild -project system-monitor.xcodeproj -scheme system-monitor -destination 'platform=macOS' -quiet test -only-testing:system-monitorTests"
+    build_command: "xcodebuild -project system-monitor.xcodeproj -scheme system-monitor -destination 'platform=macOS' -quiet build"
+    coverage_threshold: 0 # coverage is not enabled on the scheme yet
+  archive:
+    - Warn before merging destructive deltas.
+    - Keep archived changes as an immutable audit trail.

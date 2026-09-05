@@ -29,16 +29,35 @@ nonisolated struct CPUSamplingStep: Sendable {
     }
 }
 
-/// Drives CPU sampling and publishes each reading to `MetricsState`.
+/// Stateless counterpart of `CPUSamplingStep`.
+///
+/// Memory is an absolute reading rather than a delta over a window, so there is
+/// no previous sample to carry and one read is already a complete snapshot.
+nonisolated struct MemorySamplingStep: Sendable {
+    let provider: any MemoryMetricsProvider
+
+    /// Reads the counters and derives the snapshot, or `nil` when the read
+    /// fails. Swallowing the error here is what keeps a transient memory
+    /// failure from touching the CPU step or ending the loop.
+    func read() -> MemorySnapshot? {
+        guard let counts = try? provider.readCounts() else { return nil }
+        return MemoryUsageCalculator.snapshot(from: counts)
+    }
+}
+
+/// Drives CPU and memory sampling and publishes each reading to `MetricsState`.
 ///
 /// The sampler itself is main-actor bound so AppKit can start and stop it
 /// synchronously, but the sampling work runs in a detached task; only the
-/// resulting `CPUSnapshot` value crosses back to the main actor.
+/// resulting `CPUSnapshot` and `MemorySnapshot` values cross back to the main
+/// actor. Both providers are read within the same iteration, before either
+/// publish, so the two readings belong to the same tick.
 @MainActor
 final class MetricsSampler {
 
     private let state: MetricsState
     private let cpuProvider: any CPUMetricsProvider
+    private let memoryProvider: any MemoryMetricsProvider
     private let topologyProvider: any CoreTopologyProvider
     private let interval: Duration
     private let startupGap: Duration
@@ -53,6 +72,7 @@ final class MetricsSampler {
     init(
         state: MetricsState,
         cpuProvider: any CPUMetricsProvider,
+        memoryProvider: any MemoryMetricsProvider,
         topologyProvider: any CoreTopologyProvider,
         interval: Duration = .seconds(1),
         startupGap: Duration = .milliseconds(100),
@@ -60,6 +80,7 @@ final class MetricsSampler {
     ) {
         self.state = state
         self.cpuProvider = cpuProvider
+        self.memoryProvider = memoryProvider
         self.topologyProvider = topologyProvider
         self.interval = interval
         self.startupGap = startupGap
@@ -78,6 +99,7 @@ final class MetricsSampler {
 
         let state = state
         let provider = cpuProvider
+        let memoryProvider = memoryProvider
         let topologyProvider = topologyProvider
         let interval = interval
         let startupGap = startupGap
@@ -89,16 +111,26 @@ final class MetricsSampler {
                 topology: topologyProvider.topology(),
                 previous: nil
             )
-            // The first read only seeds `previous`, so the second one follows
-            // after a short gap and a real value appears almost immediately.
+            let memoryStep = MemorySamplingStep(provider: memoryProvider)
+            // The first CPU read only seeds `previous`, so the second one
+            // follows after a short gap and a real value appears almost
+            // immediately. Memory is absolute and publishes on iteration one.
             var gap = startupGap
 
             while !Task.isCancelled {
-                let (snapshot, next) = step.advanced()
+                let (cpuSnapshot, next) = step.advanced()
                 step = next
 
-                if let snapshot {
-                    await state.apply(cpu: snapshot)
+                // Both reads happen before either publish, so the two readings
+                // belong to the same tick.
+                let memorySnapshot = memoryStep.read()
+
+                if let cpuSnapshot {
+                    await state.apply(cpu: cpuSnapshot)
+                }
+
+                if let memorySnapshot {
+                    await state.apply(memory: memorySnapshot)
                 }
 
                 do {
@@ -118,8 +150,12 @@ final class MetricsSampler {
         task = nil
     }
 
-    /// Test seam: advances one step inline on the main actor and publishes the
-    /// resulting snapshot, if any.
+    /// Test seam: runs one iteration inline on the main actor and publishes
+    /// whatever it produced.
+    ///
+    /// It mirrors the loop body exactly — both providers are read before either
+    /// publish — except that it runs on the main actor, so it is never used to
+    /// assert where a read happened.
     func sampleOnce() {
         let step = inlineStep ?? CPUSamplingStep(
             provider: cpuProvider,
@@ -127,11 +163,17 @@ final class MetricsSampler {
             previous: nil
         )
 
-        let (snapshot, next) = step.advanced()
+        let (cpuSnapshot, next) = step.advanced()
         inlineStep = next
 
-        if let snapshot {
-            state.apply(cpu: snapshot)
+        let memorySnapshot = MemorySamplingStep(provider: memoryProvider).read()
+
+        if let cpuSnapshot {
+            state.apply(cpu: cpuSnapshot)
+        }
+
+        if let memorySnapshot {
+            state.apply(memory: memorySnapshot)
         }
     }
 }

@@ -18,11 +18,13 @@ struct MetricsSamplerStepTests {
     private func makeSampler(
         state: MetricsState,
         provider: FakeCPUProvider,
+        memoryProvider: FakeMemoryProvider = FakeMemoryProvider(counts: [MemoryFixtures.eightGiB]),
         topology: CoreTopology = TickFixtures.performanceFirstTopology
     ) -> MetricsSampler {
         MetricsSampler(
             state: state,
             cpuProvider: provider,
+            memoryProvider: memoryProvider,
             topologyProvider: FakeCoreTopologyProvider(result: topology)
         )
     }
@@ -137,6 +139,137 @@ struct MetricsSamplerStepTests {
         #expect(result.snapshot == nil)
         #expect(result.next.previous == samples[0])
     }
+
+    // MARK: - Memory
+
+    // memory-metrics — MM-5: memory is absolute, so one read is a full reading.
+    @Test func theMemoryStepConvertsOneReadIntoASnapshot() throws {
+        let provider = FakeMemoryProvider(counts: [MemoryFixtures.reference])
+        let step = MemorySamplingStep(provider: provider)
+
+        let snapshot = try #require(step.read())
+
+        #expect(snapshot.used == 6_787_694_592)
+        #expect(snapshot.total == 8_589_934_592)
+        #expect(provider.callCount == 1)
+    }
+
+    // memory-metrics — MM-7: a throwing read is swallowed into `nil`.
+    @Test func theMemoryStepReadsNilWhenTheProviderThrows() {
+        let provider = FakeMemoryProvider(counts: [MemoryFixtures.reference], throwOnCall: [0])
+        let step = MemorySamplingStep(provider: provider)
+
+        #expect(step.read() == nil)
+        #expect(provider.callCount == 1)
+    }
+
+    // memory-metrics — MM-5 "First step publishes memory only"
+    @Test func theFirstStepPublishesMemoryWhileTheCPUIsStillSeeding() async throws {
+        let state = await MetricsState()
+        let cpuProvider = FakeCPUProvider(samples: risingSamples())
+        let memoryProvider = FakeMemoryProvider(counts: [MemoryFixtures.eightGiB])
+        let sampler = await makeSampler(state: state, provider: cpuProvider, memoryProvider: memoryProvider)
+
+        await sampler.sampleOnce()
+
+        let memory = try #require(await state.memory)
+        #expect(memory.used == 5_926_092_800)
+        #expect(await state.memoryHistory.count == 1)
+        #expect(await state.cpu == nil)
+        #expect(await state.cpuHistory.count == 0)
+    }
+
+    // memory-metrics — MM-5 "Second step publishes both"
+    @Test func theSecondStepPublishesBothMetrics() async throws {
+        let state = await MetricsState()
+        let cpuProvider = FakeCPUProvider(samples: risingSamples())
+        let memoryProvider = FakeMemoryProvider(counts: [MemoryFixtures.eightGiB])
+        let sampler = await makeSampler(state: state, provider: cpuProvider, memoryProvider: memoryProvider)
+
+        await sampler.sampleOnce()
+        await sampler.sampleOnce()
+
+        let cpu = try #require(await state.cpu)
+        #expect(abs(cpu.total - 0.5) < 1e-9)
+        #expect(await state.memory != nil)
+        #expect(await state.memoryHistory.count == 2)
+    }
+
+    // memory-metrics — MM-6 "Call counts advance together"
+    @Test func bothProvidersAreReadOncePerStep() async {
+        let state = await MetricsState()
+        let cpuProvider = FakeCPUProvider(samples: risingSamples())
+        let memoryProvider = FakeMemoryProvider(counts: [MemoryFixtures.eightGiB])
+        let sampler = await makeSampler(state: state, provider: cpuProvider, memoryProvider: memoryProvider)
+
+        await sampler.sampleOnce()
+        await sampler.sampleOnce()
+        await sampler.sampleOnce()
+
+        #expect(cpuProvider.callCount == 3)
+        #expect(memoryProvider.callCount == 3)
+    }
+
+    // memory-metrics — MM-7 "Memory throws twice then recovers"
+    @Test func aThrowingMemoryReadPublishesNothingAndRecoversOnTheNextStep() async throws {
+        let state = await MetricsState()
+        let cpuProvider = FakeCPUProvider(samples: risingSamples())
+        let memoryProvider = FakeMemoryProvider(
+            counts: [MemoryFixtures.eightGiB],
+            throwOnCall: [0, 1]
+        )
+        let sampler = await makeSampler(state: state, provider: cpuProvider, memoryProvider: memoryProvider)
+
+        await sampler.sampleOnce()
+        await sampler.sampleOnce()
+
+        #expect(await state.memory == nil)
+        #expect(await state.memoryHistory.count == 0)
+        #expect(await state.cpu != nil)
+
+        await sampler.sampleOnce()
+
+        let memory = try #require(await state.memory)
+        #expect(memory.used == 5_926_092_800)
+        #expect(await state.memoryHistory.count == 1)
+    }
+
+    // memory-metrics — MM-7 "Memory always throws"
+    @Test func aPermanentlyFailingMemoryProviderNeverStopsTheCPU() async {
+        let state = await MetricsState()
+        let cpuProvider = FakeCPUProvider(samples: risingSamples())
+        let memoryProvider = FakeMemoryProvider(
+            counts: [MemoryFixtures.eightGiB],
+            throwOnCall: [0, 1, 2, 3]
+        )
+        let sampler = await makeSampler(state: state, provider: cpuProvider, memoryProvider: memoryProvider)
+
+        for _ in 0..<4 {
+            await sampler.sampleOnce()
+        }
+
+        #expect(await state.memory == nil)
+        #expect(await state.memoryHistory.count == 0)
+        #expect(await state.cpu != nil)
+        #expect(await state.cpuHistory.count == 3)
+        #expect(memoryProvider.callCount == 4)
+    }
+
+    // memory-metrics — MM-7 "CPU throws, memory still publishes"
+    @Test func aThrowingCPUReadDoesNotPreventTheMemoryPublish() async throws {
+        let state = await MetricsState()
+        let cpuProvider = FakeCPUProvider(samples: risingSamples(), throwOnCall: [0])
+        let memoryProvider = FakeMemoryProvider(counts: [MemoryFixtures.eightGiB])
+        let sampler = await makeSampler(state: state, provider: cpuProvider, memoryProvider: memoryProvider)
+
+        await sampler.sampleOnce()
+
+        let memory = try #require(await state.memory)
+        #expect(memory.used == 5_926_092_800)
+        #expect(await state.memoryHistory.count == 1)
+        #expect(await state.cpu == nil)
+        #expect(await state.cpuHistory.count == 0)
+    }
 }
 
 // Swift Testing only accepts whole minutes for `.timeLimit`; the per-test
@@ -175,11 +308,13 @@ struct MetricsSamplerLoopTests {
     private func makeSampler(
         state: MetricsState,
         provider: FakeCPUProvider,
+        memoryProvider: FakeMemoryProvider = FakeMemoryProvider(counts: [MemoryFixtures.eightGiB]),
         interval: Duration = .milliseconds(10)
     ) -> MetricsSampler {
         MetricsSampler(
             state: state,
             cpuProvider: provider,
+            memoryProvider: memoryProvider,
             topologyProvider: FakeCoreTopologyProvider(result: TickFixtures.performanceFirstTopology),
             interval: interval
         )
@@ -268,11 +403,19 @@ struct MetricsSamplerLoopTests {
         #expect(provider.callCount == callsAfterStop)
     }
 
-    // cpu-metrics — "Off-main sampling"
+    // cpu-metrics — "Off-main sampling"; memory-metrics — MM-8 "Off-main read".
+    //
+    // `sampleOnce()` runs inline on the main actor by design, so the loop is the
+    // only place where either read's thread can be asserted.
     @Test func everyReadHappensOffTheMainThread() async {
         let state = await MetricsState()
         let provider = FakeCPUProvider(samples: climbingSamples())
-        let sampler = await makeSampler(state: state, provider: provider)
+        let memoryProvider = FakeMemoryProvider(counts: [MemoryFixtures.eightGiB])
+        let sampler = await makeSampler(
+            state: state,
+            provider: provider,
+            memoryProvider: memoryProvider
+        )
 
         await sampler.start()
         _ = await waitUntil(timeout: .milliseconds(1500)) {
@@ -283,5 +426,10 @@ struct MetricsSamplerLoopTests {
         let recorded = provider.readOnMainThread
         #expect(recorded.count >= 2)
         #expect(recorded.allSatisfy { $0 == false })
+
+        let memoryReads = memoryProvider.readOnMainThread
+        #expect(memoryReads.count >= 2)
+        #expect(memoryReads.allSatisfy { $0 == false })
+        #expect(await state.memory != nil)
     }
 }

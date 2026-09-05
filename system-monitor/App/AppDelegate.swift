@@ -16,6 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let sampler = MetricsSampler(
             state: state,
             cpuProvider: MachCPUProvider(),
+            memoryProvider: MachMemoryProvider(),
             topologyProvider: IORegistryCoreTopologyProvider(sysctl: SysctlReader()),
             interval: .seconds(1)
         )

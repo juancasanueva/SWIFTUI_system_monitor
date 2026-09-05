@@ -46,6 +46,19 @@ struct PaletteTests {
         #expect(Palette.memAccent == Self.sRGB(0xF5A623))
     }
 
+    // memory-card — "Token values"
+    //
+    // Values only: `memCached` is deliberately the same colour as `cpuAccent`,
+    // so asserting pairwise distinctness here would pin a coincidence rather
+    // than the palette.
+    @Test func memorySegmentTokensMatchTheProductPalette() {
+        #expect(Palette.memAccent == Self.sRGB(0xF5A623))
+        #expect(Palette.memWired == Self.sRGB(0xE5484D))
+        #expect(Palette.memCompressed == Self.sRGB(0xF5D90A))
+        #expect(Palette.memCached == Self.sRGB(0x4D8DFF))
+        #expect(Palette.memFree == Self.sRGB(0x3DD68C))
+    }
+
     @Test func surfaceTokensMatchTheProductPalette() {
         #expect(Palette.panelBackground == Self.sRGB(0x0F1522))
         #expect(Palette.cardBackground == Self.sRGB(0x1A2131))
@@ -77,6 +90,24 @@ struct MenuBarReadingsTests {
         )
     }
 
+    /// A memory snapshot whose `fraction` is exactly `fraction`.
+    ///
+    /// Only `total` and `used` drive the widget, so the component fields stay
+    /// zero: the widget must read the fraction, not re-derive it.
+    private static func memorySnapshot(fraction: Double) -> MemorySnapshot {
+        let total: UInt64 = 1_000_000_000
+
+        return MemorySnapshot(
+            total: total,
+            app: 0,
+            wired: 0,
+            compressed: 0,
+            cached: 0,
+            free: 0,
+            used: UInt64((Double(total) * fraction).rounded())
+        )
+    }
+
     private static func history(_ values: [Double], capacity: Int = 120) -> MetricHistory {
         var history = MetricHistory(capacity: capacity)
         for value in values {
@@ -87,18 +118,27 @@ struct MenuBarReadingsTests {
 
     private static func reading(
         _ module: MetricModule,
-        snapshot: CPUSnapshot? = nil,
-        history: MetricHistory = MetricHistory(capacity: 120)
+        cpu: CPUSnapshot? = nil,
+        cpuHistory: MetricHistory = MetricHistory(capacity: 120),
+        memory: MemorySnapshot? = nil,
+        memoryHistory: MetricHistory = MetricHistory(capacity: 120)
     ) -> ModuleReading? {
-        StatusItemReadings.build(snapshot: snapshot, history: history)
-            .first { $0.module == module }
+        StatusItemReadings.build(
+            cpu: cpu,
+            cpuHistory: cpuHistory,
+            memory: memory,
+            memoryHistory: memoryHistory
+        )
+        .first { $0.module == module }
     }
 
     // menu-bar-widget — "Order preserved"
     @Test func readingsFollowTheMenuBarOrder() {
         let readings = StatusItemReadings.build(
-            snapshot: nil,
-            history: MetricHistory(capacity: 120)
+            cpu: nil,
+            cpuHistory: MetricHistory(capacity: 120),
+            memory: nil,
+            memoryHistory: MetricHistory(capacity: 120)
         )
 
         #expect(readings.map(\.module) == [.cpu, .memory])
@@ -114,7 +154,7 @@ struct MenuBarReadingsTests {
 
     // menu-bar-widget — "Value follows state"
     @Test func theCPUValueFollowsTheSnapshotTotal() throws {
-        let cpu = try #require(Self.reading(.cpu, snapshot: Self.snapshot(total: 0.42)))
+        let cpu = try #require(Self.reading(.cpu, cpu: Self.snapshot(total: 0.42)))
 
         #expect(cpu.valueText == "42%")
     }
@@ -122,7 +162,7 @@ struct MenuBarReadingsTests {
     // menu-bar-widget — "Integer formatting"
     @Test(arguments: zip([0.264, 0.266, 0.0, 1.0], ["26%", "27%", "0%", "100%"]))
     func theCPUValueIsAWholePercentage(total: Double, expected: String) throws {
-        let cpu = try #require(Self.reading(.cpu, snapshot: Self.snapshot(total: total)))
+        let cpu = try #require(Self.reading(.cpu, cpu: Self.snapshot(total: total)))
 
         #expect(cpu.valueText == expected)
     }
@@ -130,7 +170,7 @@ struct MenuBarReadingsTests {
     // menu-bar-widget — "Last 60 of 120"
     @Test func theSparklineUsesTheNewestSixtySamples() throws {
         let values = (0..<120).map { Double($0) / 120 }
-        let cpu = try #require(Self.reading(.cpu, history: Self.history(values)))
+        let cpu = try #require(Self.reading(.cpu, cpuHistory: Self.history(values)))
 
         #expect(cpu.samples.count == 60)
         #expect(cpu.samples == Array(values.suffix(60)))
@@ -139,7 +179,7 @@ struct MenuBarReadingsTests {
     // menu-bar-widget — "Partial history"
     @Test func aPartialHistoryKeepsEveryStoredSample() throws {
         let values = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7]
-        let cpu = try #require(Self.reading(.cpu, history: Self.history(values)))
+        let cpu = try #require(Self.reading(.cpu, cpuHistory: Self.history(values)))
 
         #expect(cpu.samples == values)
     }
@@ -151,25 +191,83 @@ struct MenuBarReadingsTests {
         #expect(cpu.samples.isEmpty)
     }
 
-    // menu-bar-widget — "MEM placeholder still has a sparkline": the MEM reading
-    // carries no samples until M3, so its sparkline area renders empty.
-    @Test func theMemoryModuleStaysAPlaceholder() throws {
-        let values = (0..<120).map { Double($0) / 120 }
+    // menu-bar-widget — "MEM value from fraction"
+    @Test func theMemoryValueFollowsTheSnapshotFraction() throws {
         let memory = try #require(
-            Self.reading(.memory, snapshot: Self.snapshot(total: 0.9), history: Self.history(values))
+            Self.reading(.memory, memory: Self.memorySnapshot(fraction: 0.59))
         )
 
-        #expect(memory.samples.isEmpty)
+        #expect(memory.valueText == "59%")
+    }
+
+    // menu-bar-widget — "MEM before first snapshot"
+    @Test func theMemoryValueReadsZeroPercentBeforeTheFirstSnapshot() throws {
+        let memory = try #require(Self.reading(.memory))
+
         #expect(memory.valueText == "0%")
+        #expect(memory.samples.isEmpty)
+    }
+
+    // menu-bar-widget — "MEM newest 60 samples"
+    @Test func theMemorySparklineUsesTheNewestSixtySamples() throws {
+        let values = (0..<120).map { Double($0) / 120 }
+        let memory = try #require(
+            Self.reading(.memory, memoryHistory: Self.history(values))
+        )
+
+        #expect(memory.samples.count == 60)
+        #expect(memory.samples == Array(values.suffix(60)))
+    }
+
+    // menu-bar-widget — "MEM accent"
+    @Test func theMemoryModuleCarriesTheMemoryAccent() throws {
+        let memory = try #require(Self.reading(.memory))
+
+        #expect(memory.module.accent == Palette.memAccent)
+    }
+
+    // menu-bar-widget — "Both modules follow state"
+    //
+    // The two modules read two independent pairs: swapping the histories or the
+    // snapshots would break exactly one of these four expectations.
+    @Test func bothModulesFollowTheirOwnState() throws {
+        let cpuValues = [0.10, 0.20, 0.30]
+        let memoryValues = [0.55, 0.57, 0.59]
+
+        let readings = StatusItemReadings.build(
+            cpu: Self.snapshot(total: 0.42),
+            cpuHistory: Self.history(cpuValues),
+            memory: Self.memorySnapshot(fraction: 0.59),
+            memoryHistory: Self.history(memoryValues)
+        )
+        let cpu = try #require(readings.first { $0.module == .cpu })
+        let memory = try #require(readings.first { $0.module == .memory })
+
+        #expect(cpu.valueText == "42%")
+        #expect(memory.valueText == "59%")
+        #expect(cpu.samples == cpuValues)
+        #expect(memory.samples == memoryValues)
     }
 
     // menu-bar-widget — "Equal data compares equal"
     @Test func readingsBuiltFromTheSameStateCompareEqual() {
         let history = Self.history([0.1, 0.2, 0.3])
         let snapshot = Self.snapshot(total: 0.3)
+        let memoryHistory = Self.history([0.4, 0.5])
+        let memory = Self.memorySnapshot(fraction: 0.5)
 
-        let first = StatusItemReadings.build(snapshot: snapshot, history: history)
-        let second = StatusItemReadings.build(snapshot: snapshot, history: history)
+        let first = StatusItemReadings.build(
+            cpu: snapshot,
+            cpuHistory: history,
+            memory: memory,
+            memoryHistory: memoryHistory
+        )
+        let second = StatusItemReadings.build(
+            cpu: snapshot,
+            cpuHistory: history,
+            memory: memory,
+            memoryHistory: memoryHistory
+        )
 
         #expect(first == second)
     }
@@ -188,9 +286,37 @@ struct StatusItemMetricsTests {
     /// Width of `StatusItemContent` rendering a single reading.
     @MainActor
     private static func contentWidth(for reading: ModuleReading) -> CGFloat {
-        let view = NSHostingView(rootView: StatusItemContent(readings: [reading]))
+        Self.contentWidth(for: [reading])
+    }
+
+    /// Width of `StatusItemContent` rendering the whole widget.
+    @MainActor
+    private static func contentWidth(for readings: [ModuleReading]) -> CGFloat {
+        let view = NSHostingView(rootView: StatusItemContent(readings: readings))
         view.layoutSubtreeIfNeeded()
         return view.fittingSize.width
+    }
+
+    private static func history(_ values: [Double], capacity: Int = 120) -> MetricHistory {
+        var history = MetricHistory(capacity: capacity)
+        for value in values {
+            history.append(value)
+        }
+        return history
+    }
+
+    private static func memorySnapshot(fraction: Double) -> MemorySnapshot {
+        let total: UInt64 = 1_000_000_000
+
+        return MemorySnapshot(
+            total: total,
+            app: 0,
+            wired: 0,
+            compressed: 0,
+            cached: 0,
+            free: 0,
+            used: UInt64((Double(total) * fraction).rounded())
+        )
     }
 
     // menu-bar-widget — "Sixty-sample sparkline"
@@ -237,8 +363,7 @@ struct StatusItemMetricsTests {
         #expect(readings.allSatisfy { $0.samples.count == StatusItemReadings.sampleCount })
     }
 
-    // menu-bar-widget — "Every module renders a sparkline",
-    // "MEM placeholder still has a sparkline"
+    // menu-bar-widget — "Every module renders a sparkline"
     //
     // The sparkline area is structural: a module reserves it even with no
     // samples, so a module that skipped it could not reach this width.
@@ -252,5 +377,54 @@ struct StatusItemMetricsTests {
 
         #expect(width >= sparkline + value)
         #expect(width < sparkline + value + 40, "the module reserved more than one label and one sparkline")
+    }
+
+    // menu-bar-widget — "MEM live sparkline"
+    @Test func theMemoryModuleRendersItsLiveSparkline() async throws {
+        let values = (0..<30).map { 0.5 + Double($0) / 300 }
+
+        let readings = StatusItemReadings.build(
+            cpu: nil,
+            cpuHistory: MetricHistory(capacity: 120),
+            memory: Self.memorySnapshot(fraction: 0.59),
+            memoryHistory: Self.history(values)
+        )
+        let memory = try #require(readings.first { $0.module == .memory })
+        let width = await Self.contentWidth(for: memory)
+        let sparkline = await StatusItemMetrics.sparklineWidth
+        let value = await StatusItemMetrics.valueWidth
+
+        #expect(memory.samples == values)
+        #expect(memory.valueText == "59%")
+        #expect(memory.module.label == "MEM")
+        #expect(memory.module.accent == Palette.memAccent)
+        #expect(width >= sparkline + value)
+    }
+
+    // menu-bar-widget — "MEM empty history still has a sparkline"
+    @Test func theMemoryModuleKeepsItsSparklineWithoutHistory() async throws {
+        let readings = StatusItemReadings.build(
+            cpu: nil,
+            cpuHistory: MetricHistory(capacity: 120),
+            memory: nil,
+            memoryHistory: MetricHistory(capacity: 120)
+        )
+        let memory = try #require(readings.first { $0.module == .memory })
+        let width = await Self.contentWidth(for: memory)
+        let sparkline = await StatusItemMetrics.sparklineWidth
+        let value = await StatusItemMetrics.valueWidth
+
+        #expect(memory.samples.isEmpty)
+        #expect(memory.valueText == "0%")
+        #expect(memory.module.label == "MEM")
+        #expect(width >= sparkline + value)
+
+        // menu-bar-widget — "Width budget": both modules at "100%" with a full
+        // sparkline, which is the widest content the widget can ever render.
+        let fullScale = await StatusItemMetrics.measurementReadings
+        let fullWidth = await Self.contentWidth(for: fullScale)
+
+        #expect(fullWidth > 0, "the widget measured as empty")
+        #expect(fullWidth < 230)
     }
 }

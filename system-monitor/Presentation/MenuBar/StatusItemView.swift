@@ -29,22 +29,29 @@ nonisolated enum StatusItemReadings {
 
     /// One reading per module, in `MetricModule.menuBarOrder`.
     ///
-    /// CPU binds to the live snapshot and history; MEM keeps its placeholder
-    /// value until the memory module lands in M3.
-    static func build(snapshot: CPUSnapshot?, history: MetricHistory) -> [ModuleReading] {
+    /// Each module binds to its own pair of published values: CPU to the CPU
+    /// snapshot and history, MEM to the memory snapshot and history. Both read
+    /// `0%` with an empty sparkline until their first snapshot arrives, so the
+    /// widget never renders a static placeholder.
+    static func build(
+        cpu: CPUSnapshot?,
+        cpuHistory: MetricHistory,
+        memory: MemorySnapshot?,
+        memoryHistory: MetricHistory
+    ) -> [ModuleReading] {
         MetricModule.menuBarOrder.map { module in
             switch module {
             case .cpu:
                 ModuleReading(
                     module: .cpu,
-                    samples: history.suffix(sampleCount),
-                    valueText: PercentFormatter.integer(snapshot?.total ?? 0)
+                    samples: cpuHistory.suffix(sampleCount),
+                    valueText: PercentFormatter.integer(cpu?.total ?? 0)
                 )
             case .memory:
                 ModuleReading(
                     module: .memory,
-                    samples: [],
-                    valueText: PercentFormatter.integer(0)
+                    samples: memoryHistory.suffix(sampleCount),
+                    valueText: PercentFormatter.integer(memory?.fraction ?? 0)
                 )
             }
         }
@@ -121,13 +128,21 @@ struct StatusItemContent: View {
 }
 
 /// Container reading the published metrics from the environment.
+///
+/// It forwards both metric pairs to `StatusItemReadings`; the mapping itself
+/// lives there so it stays testable without rendering this view.
 struct StatusItemView: View {
 
     @Environment(MetricsState.self) private var state
 
     var body: some View {
         StatusItemContent(
-            readings: StatusItemReadings.build(snapshot: state.cpu, history: state.cpuHistory)
+            readings: StatusItemReadings.build(
+                cpu: state.cpu,
+                cpuHistory: state.cpuHistory,
+                memory: state.memory,
+                memoryHistory: state.memoryHistory
+            )
         )
     }
 }

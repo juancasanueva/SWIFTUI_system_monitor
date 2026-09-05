@@ -1,0 +1,56 @@
+schema: gentle-ai.sdd-state/v1
+change: memory-module
+milestone: PRD M3 "Memory end to end" (feature F4, R4.1-R4.6; R5.1-R5.4)
+artifact_store: hybrid
+execution_mode: auto
+delivery_strategy: single-pr
+review_budget_lines: unlimited
+strict_tdd: true
+created: 2026-09-05
+status: ARCHIVED
+closed: 2026-09-06
+archived_to: openspec/changes/archive/2026-09-06-memory-module/
+archive_report: openspec/changes/archive/2026-09-06-memory-module/archive-report.md   # Engram sdd/memory-module/archive-report
+
+phases:
+  explore: done            # exploration.md, Engram sdd/memory-module/explore (8216)
+  research: done           # research.md rev 2 status done, Engram sdd/memory-module/research (8219), sha256 3ffd2af5…f300
+  propose: done            # proposal.md, Engram sdd/memory-module/proposal (8220)
+  spec: done               # 3 delta specs, Engram sdd/memory-module/spec (8221)
+  design: done             # rev 2 after validator amendments; Engram sdd/memory-module/design (8222)
+  tasks: done              # 31 tasks / 7 phases, Engram sdd/memory-module/tasks (8224); size:exception recorded (review budget unlimited)
+  apply: done              # batches A/B/C + correction D settled complete; 299 tests, 0 warnings; 35/35 tasks; final visual re-check pending user
+  verify: done             # rev 2 pass_with_warnings, 51/51 scenarios, 299 tests (8227); rev 1 superseded
+  archive: done            # ARCHIVED 2026-09-06: user confirmed the manual re-check (7.3 PASSED, Used 17.32 vs 17.38 GB) and the destructive menu-bar-widget merge; specs synced, folder moved
+
+pre_proposal:
+  status: confirmed
+  asked_on: 2026-09-05
+  decisions:
+    research_lane: selected (Activity Monitor "Memory Used" formula, source-backed)
+    used_formula: match-activity-monitor (revised 2026-09-06 after manual check 7.3: Used = Total - free_count - external_page_count; Free = free_count - speculative_count; Cached = external + speculative; purgeable stays inside Used; PRD R4.2 amended; bar sums to Total)
+    card_layout: graph-bottom (rows, stacked bar, legend, history graph; PRD 4.3 + reference image)
+    memory_first_publish: first-iteration (absolute reading, publishes before CPU second sample)
+  assumptions_unless_overridden:
+    memory_pressure_indicator: out of scope (not in PRD F4/R4)
+    page_size_source: design decision, prefer host_page_size() or hw.pagesize over the vm_kernel_page_size global
+    stacked_bar_remainder: design decision, derived from used_formula
+
+preproposal:
+  schema: gentle-ai.sdd-preproposal/v1
+  revision: 1
+  exploration:
+    outcome: done
+    openspec: openspec/changes/memory-module/exploration.md
+    engram: sdd/memory-module/explore (observation 8216)
+  research:
+    selected: true
+    request: [Q1 activity-monitor-memory-used-formula, Q2 page-size-and-swift6-global, Q3 bytecountformatstyle-memory-style]
+    classes: [documentation, open-web]
+    admission: gentle-ai.sdd-research-capability/v1 grants documentation=granted open-web=granted; persistence orchestrator-owned
+    outcome: done (revision 2, 15 sources, claims C1-C26, contradictions X1-X3)
+    openspec: openspec/changes/memory-module/research.md
+    engram: sdd/memory-module/research (observation 8219)
+    hybrid_check: identical content written to both stores from retained canonical bytes; file sha256 3ffd2af5e2a439da4ea6999a770973ab943a0940ae564d6a2f89461bd5f8f300
+  product_decisions: confirmed   # see pre_proposal.decisions above; Engram 8218
+  proposal_ready: true

@@ -27,8 +27,21 @@ nonisolated enum Palette {
     /// Efficiency-core values and bars.
     static let cpuEfficiency = sRGB(0x3FC1C9)
 
-    /// Memory gauge and graph.
+    /// Memory gauge, history graph, and the App part of the stacked bar.
     static let memAccent = sRGB(0xF5A623)
+
+    /// Wired segment of the memory bar.
+    static let memWired = sRGB(0xE5484D)
+
+    /// Compressed segment of the memory bar.
+    static let memCompressed = sRGB(0xF5D90A)
+
+    /// Cached segment of the memory bar. Shares its value with `cpuAccent`:
+    /// two tokens, one colour, because the two bars are never adjacent.
+    static let memCached = sRGB(0x4D8DFF)
+
+    /// Free segment of the memory bar.
+    static let memFree = sRGB(0x3DD68C)
 
     /// Builds an opaque sRGB colour from a `0xRRGGBB` literal.
     private static func sRGB(_ hex: UInt32) -> Color {
@@ -45,7 +58,7 @@ nonisolated enum Palette {
 /// Presentation-layer accent for each metric module.
 ///
 /// The mapping lives here, not in the Domain enum, so `MetricModule` stays free
-/// of SwiftUI. Memory keeps its palette accent as a placeholder until M3.
+/// of SwiftUI.
 nonisolated extension MetricModule {
     var accent: Color {
         switch self {

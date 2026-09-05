@@ -125,11 +125,13 @@ Kept for v2. Described in section 11.
   - App = `internal_page_count − purgeable_count`
   - Wired = `wire_count`
   - Compressed = `compressor_page_count`
-  - Cached = `external_page_count + purgeable_count`
-  - Free = `free_count`
-  - Used = App + Wired + Compressed
+  - Cached = `external_page_count + speculative_count`
+  - Free = `free_count − speculative_count` (speculative pages are counted inside `free_count`)
+  - Used = Total − `free_count` − `external_page_count` (equivalently Total − Free − Cached, since Free and Cached share the speculative pages)
   - Percentage = Used / Total
-- R4.3 All page counts are multiplied by `vm_kernel_page_size`.
+  - Note: only free and file-backed pages leave Used. Purgeable pages count as Used but not as App, matching Activity Monitor, and speculative pages count as Cached rather than Free.
+  - Note: Used includes memory not visible in App, Wired or Compressed (purgeable, kernel-managed and boot-time carve-out pages), so App + Wired + Compressed is less than Used by roughly 0.5 GB on Apple Silicon.
+- R4.3 All page counts are multiplied by the kernel page size, read once from `host_page_size()`.
 - R4.4 Values are formatted with `ByteCountFormatStyle` so the decimal separator follows the user locale.
 - R4.5 Stacked bar segments are proportional to App, Wired, Compressed, Cached, Free against Total, with the legend colors from 7.1.
 - R4.6 History graph shows the last 120 samples of the Used percentage.
@@ -195,7 +197,10 @@ struct CoreUsage: Sendable {
 struct MemorySnapshot: Sendable {
     let total: UInt64
     let app, wired, compressed, cached, free: UInt64
-    var used: UInt64 { app + wired + compressed }
+    let used: UInt64           // Total − Free − Cached, i.e. Total minus the
+                               // free and file-backed pages; carries the
+                               // purgeable, kernel and carve-out pages that
+                               // App, Wired and Compressed do not account for
     var fraction: Double { Double(used) / Double(total) }
 }
 ```

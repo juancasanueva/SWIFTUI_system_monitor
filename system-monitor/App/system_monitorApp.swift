@@ -7,7 +7,9 @@ struct SystemMonitorApp: App {
     var body: some Scene {
         // A Settings scene is the only scene so no window opens at launch.
         // The menu bar status item is created by `AppDelegate`.
-        Settings {
+        // Qualified because the Domain owns a `Settings` value type (ST-1),
+        // which otherwise shadows the SwiftUI scene inside this module.
+        SwiftUI.Settings {
             EmptyView()
         }
     }

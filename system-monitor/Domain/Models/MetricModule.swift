@@ -18,7 +18,8 @@ nonisolated enum MetricModule: String, CaseIterable, Sendable, Identifiable {
         }
     }
 
-    /// Left-to-right order of the modules in the menu bar widget.
+    /// Default left-to-right order of the modules in the menu bar widget; the
+    /// effective order is `Settings.menuBarModules`, which the user edits.
     static var menuBarOrder: [MetricModule] {
         [.cpu, .memory]
     }

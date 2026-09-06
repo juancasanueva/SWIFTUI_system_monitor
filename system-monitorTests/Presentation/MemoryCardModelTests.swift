@@ -242,4 +242,31 @@ struct MemoryCardModelTests {
         #expect(MemoryCardModel.graphSamples(for: Self.history([])).isEmpty)
         #expect(MemoryCardModel.legend.count == 5)
     }
+
+    // MARK: - MC-10 Reduce motion
+
+    // memory-card — "Reduce motion": the gauge jumps instead of animating.
+    @Test func reduceMotionRemovesTheGaugeAnimation() {
+        #expect(MemoryCardModel.gaugeAnimation(reduceMotion: true) == nil)
+    }
+
+    // memory-card — "Motion allowed": MC-10 requires the same mechanism and
+    // the same animation as the CPU card, so this is a direct equality rather
+    // than two independently maintained constants.
+    @Test func motionAllowedMatchesTheCPUCardGaugeAnimation() {
+        #expect(
+            MemoryCardModel.gaugeAnimation(reduceMotion: false)
+                == CPUCardModel.gaugeAnimation(reduceMotion: false)
+        )
+        #expect(MemoryCardModel.gaugeAnimation(reduceMotion: false) == Animation.easeOut(duration: 0.25))
+    }
+
+    // memory-card — MC-10: the two answers must differ, otherwise the flag is
+    // ignored.
+    @Test func theTwoReduceMotionAnswersDiffer() {
+        #expect(
+            MemoryCardModel.gaugeAnimation(reduceMotion: true)
+                != MemoryCardModel.gaugeAnimation(reduceMotion: false)
+        )
+    }
 }

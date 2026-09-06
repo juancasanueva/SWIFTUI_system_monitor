@@ -111,6 +111,16 @@ nonisolated enum CPUCardModel {
     static func graphSamples(for history: MetricHistory) -> [Double] {
         history.suffix(graphCapacity)
     }
+
+    /// The ring gauge animation, or `nil` when the user asked for reduced
+    /// motion (cpu-card "Palette and card surface").
+    ///
+    /// The decision lives here rather than in `body` so the accessibility rule
+    /// is a unit-tested value instead of an inspection of the view. The view
+    /// reads `\.accessibilityReduceMotion` and applies exactly this result.
+    static func gaugeAnimation(reduceMotion: Bool) -> Animation? {
+        reduceMotion ? nil : .easeOut(duration: 0.25)
+    }
 }
 
 /// The CPU detail card inside the popover (PRD 7.3).
@@ -133,7 +143,6 @@ struct CPUCard: View {
     private static let headerSpacing: CGFloat = 6
     private static let graphHeight: CGFloat = 48
     private static let headerFontSize: CGFloat = 13
-    private static let gaugeAnimation = Animation.easeOut(duration: 0.25)
 
     private var rows: [CPUCardRow] { CPUCardModel.rows(for: snapshot) }
     private var groups: [CPUCardGroup] { CPUCardModel.groups(for: snapshot) }
@@ -150,7 +159,10 @@ struct CPUCard: View {
                     subtitle: "CPU"
                 )
                 .equatable()
-                .animation(reduceMotion ? nil : Self.gaugeAnimation, value: snapshot?.total)
+                .animation(
+                    CPUCardModel.gaugeAnimation(reduceMotion: reduceMotion),
+                    value: snapshot?.total
+                )
 
                 VStack(spacing: Self.rowSpacing) {
                     ForEach(rows) { row in

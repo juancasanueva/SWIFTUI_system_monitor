@@ -141,6 +141,15 @@ nonisolated enum MemoryCardModel {
     static func graphSamples(for history: MetricHistory) -> [Double] {
         history.suffix(graphCapacity)
     }
+
+    /// The ring gauge animation, or `nil` under reduced motion (MC-10).
+    ///
+    /// MC-10 requires the same mechanism and the same animation as the CPU
+    /// card, so this delegates rather than repeating the constant: the two can
+    /// never drift apart.
+    static func gaugeAnimation(reduceMotion: Bool) -> Animation? {
+        CPUCardModel.gaugeAnimation(reduceMotion: reduceMotion)
+    }
 }
 
 /// The Memory detail card inside the popover (PRD 4.3, 7.3).
@@ -166,7 +175,6 @@ struct MemoryCard: View {
     private static let barHeight: CGFloat = 8
     private static let graphHeight: CGFloat = 48
     private static let headerFontSize: CGFloat = 13
-    private static let gaugeAnimation = Animation.easeOut(duration: 0.25)
 
     private var rows: [MemoryCardRow] { MemoryCardModel.rows(for: snapshot) }
 
@@ -228,7 +236,10 @@ struct MemoryCard: View {
                 subtitle: "RAM"
             )
             .equatable()
-            .animation(reduceMotion ? nil : Self.gaugeAnimation, value: snapshot?.fraction)
+            .animation(
+                MemoryCardModel.gaugeAnimation(reduceMotion: reduceMotion),
+                value: snapshot?.fraction
+            )
 
             VStack(spacing: Self.rowSpacing) {
                 ForEach(rows) { row in

@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import Testing
 @testable import system_monitor
 
@@ -169,5 +170,31 @@ struct CPUCardModelTests {
         let history = MetricHistory(capacity: CPUCardModel.graphCapacity)
 
         #expect(CPUCardModel.graphSamples(for: history).isEmpty)
+    }
+
+    // MARK: - Reduce motion
+
+    // The animation choice is a model decision rather than a condition inside
+    // `body`, so the accessibility rule is asserted here instead of by reading
+    // the view. The view keeps reading the environment and passes the flag in.
+
+    // cpu-card — "Reduce motion yields no animation"
+    @Test func reduceMotionRemovesTheGaugeAnimation() {
+        #expect(CPUCardModel.gaugeAnimation(reduceMotion: true) == nil)
+    }
+
+    // cpu-card — "Motion allowed yields the gauge animation": the card's
+    // standard quarter-second ease-out, unchanged from the inline constant it
+    // replaces.
+    @Test func motionAllowedYieldsTheQuarterSecondEaseOut() {
+        #expect(CPUCardModel.gaugeAnimation(reduceMotion: false) == Animation.easeOut(duration: 0.25))
+    }
+
+    // cpu-card — the two answers must differ, otherwise the flag is ignored.
+    @Test func theTwoReduceMotionAnswersDiffer() {
+        #expect(
+            CPUCardModel.gaugeAnimation(reduceMotion: true)
+                != CPUCardModel.gaugeAnimation(reduceMotion: false)
+        )
     }
 }

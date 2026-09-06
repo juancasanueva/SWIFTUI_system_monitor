@@ -116,14 +116,21 @@ struct MenuBarReadingsTests {
         return history
     }
 
+    /// The reading for `module`, built from the user's ordered module subset.
+    ///
+    /// `modules` defaults to `MetricModule.menuBarOrder` because that is the
+    /// default `Settings.menuBarModules`, not because the builder still has a
+    /// fixed list of its own (MBW-1).
     private static func reading(
         _ module: MetricModule,
+        modules: [MetricModule] = MetricModule.menuBarOrder,
         cpu: CPUSnapshot? = nil,
         cpuHistory: MetricHistory = MetricHistory(capacity: 120),
         memory: MemorySnapshot? = nil,
         memoryHistory: MetricHistory = MetricHistory(capacity: 120)
     ) -> ModuleReading? {
         StatusItemReadings.build(
+            modules: modules,
             cpu: cpu,
             cpuHistory: cpuHistory,
             memory: memory,
@@ -135,6 +142,7 @@ struct MenuBarReadingsTests {
     // menu-bar-widget — "Order preserved"
     @Test func readingsFollowTheMenuBarOrder() {
         let readings = StatusItemReadings.build(
+            modules: MetricModule.menuBarOrder,
             cpu: nil,
             cpuHistory: MetricHistory(capacity: 120),
             memory: nil,
@@ -143,6 +151,53 @@ struct MenuBarReadingsTests {
 
         #expect(readings.map(\.module) == [.cpu, .memory])
         #expect(readings.map(\.module) == MetricModule.menuBarOrder)
+    }
+
+    // menu-bar-widget — "Hidden module omitted": the builder renders the user's
+    // subset, so a hidden module produces no reading at all rather than a
+    // reading the view then has to filter.
+    @Test func aHiddenModuleProducesNoReading() {
+        let readings = StatusItemReadings.build(
+            modules: [.memory],
+            cpu: Self.snapshot(total: 0.42),
+            cpuHistory: Self.history([0.4, 0.42]),
+            memory: Self.memorySnapshot(fraction: 0.59),
+            memoryHistory: Self.history([0.58, 0.59])
+        )
+
+        #expect(readings.count == 1)
+        #expect(readings.map(\.module) == [.memory])
+        #expect(readings[0].valueText == "59%")
+    }
+
+    // menu-bar-widget — "Reversed order": the order comes from the argument,
+    // not from `menuBarOrder`, so reversing the subset reverses the widget.
+    @Test func theReadingsFollowTheRequestedOrder() {
+        let readings = StatusItemReadings.build(
+            modules: [.memory, .cpu],
+            cpu: Self.snapshot(total: 0.42),
+            cpuHistory: MetricHistory(capacity: 120),
+            memory: Self.memorySnapshot(fraction: 0.59),
+            memoryHistory: MetricHistory(capacity: 120)
+        )
+
+        #expect(readings.map(\.module) == [.memory, .cpu])
+        #expect(readings.map(\.valueText) == ["59%", "42%"])
+    }
+
+    // menu-bar-widget — "Data-driven module list": an empty subset renders
+    // nothing. `Settings` never produces one, but the builder is pure and must
+    // not fall back to a default list of its own.
+    @Test func anEmptyModuleListProducesNoReadings() {
+        let readings = StatusItemReadings.build(
+            modules: [],
+            cpu: Self.snapshot(total: 0.42),
+            cpuHistory: Self.history([0.1, 0.2]),
+            memory: Self.memorySnapshot(fraction: 0.59),
+            memoryHistory: Self.history([0.3, 0.4])
+        )
+
+        #expect(readings.isEmpty)
     }
 
     // menu-bar-widget — "No snapshot yet"
@@ -235,6 +290,7 @@ struct MenuBarReadingsTests {
         let memoryValues = [0.55, 0.57, 0.59]
 
         let readings = StatusItemReadings.build(
+            modules: [.cpu, .memory],
             cpu: Self.snapshot(total: 0.42),
             cpuHistory: Self.history(cpuValues),
             memory: Self.memorySnapshot(fraction: 0.59),
@@ -243,6 +299,7 @@ struct MenuBarReadingsTests {
         let cpu = try #require(readings.first { $0.module == .cpu })
         let memory = try #require(readings.first { $0.module == .memory })
 
+        #expect(readings.map(\.module) == [.cpu, .memory])
         #expect(cpu.valueText == "42%")
         #expect(memory.valueText == "59%")
         #expect(cpu.samples == cpuValues)
@@ -257,12 +314,14 @@ struct MenuBarReadingsTests {
         let memory = Self.memorySnapshot(fraction: 0.5)
 
         let first = StatusItemReadings.build(
+            modules: MetricModule.menuBarOrder,
             cpu: snapshot,
             cpuHistory: history,
             memory: memory,
             memoryHistory: memoryHistory
         )
         let second = StatusItemReadings.build(
+            modules: MetricModule.menuBarOrder,
             cpu: snapshot,
             cpuHistory: history,
             memory: memory,
@@ -270,6 +329,77 @@ struct MenuBarReadingsTests {
         )
 
         #expect(first == second)
+    }
+}
+
+// menu-bar-widget — MBW-14 "Redraw gating on unchanged readings".
+//
+// `StatusItemContent` and `ModuleLabel` are `Equatable` so SwiftUI can skip
+// their bodies while the readings stand still. Views are main-actor isolated
+// under the module's default isolation, so the comparison runs inside
+// `MainActor.run` (precedent: `CanvasComponentEqualityTests`).
+@Suite("Status item content equality", .timeLimit(.minutes(1)))
+struct StatusItemContentEqualityTests {
+
+    private static func readings(cpuValue: String) -> [ModuleReading] {
+        [
+            ModuleReading(module: .cpu, samples: [0.1, 0.2], valueText: cpuValue),
+            ModuleReading(module: .memory, samples: [0.5, 0.6], valueText: "59%"),
+        ]
+    }
+
+    // menu-bar-widget — "Identical readings compare equal"
+    @Test func contentsBuiltFromIdenticalReadingsCompareEqual() async {
+        await MainActor.run {
+            let base = StatusItemContent(readings: Self.readings(cpuValue: "42%"))
+            let same = StatusItemContent(readings: Self.readings(cpuValue: "42%"))
+
+            #expect(base == same)
+        }
+    }
+
+    // menu-bar-widget — "Changed value compares unequal"
+    @Test func contentsDifferingOnlyInTheCPUValueCompareUnequal() async {
+        await MainActor.run {
+            let base = StatusItemContent(readings: Self.readings(cpuValue: "42%"))
+            let changed = StatusItemContent(readings: Self.readings(cpuValue: "43%"))
+
+            #expect(base != changed)
+        }
+    }
+
+    // menu-bar-widget — MBW-14: the module label is the unit SwiftUI skips, so
+    // it carries the same equality contract as the content around it. Samples
+    // are compared too, otherwise a moving sparkline would be gated away.
+    @Test func moduleLabelsCompareOnTheirWholeReading() async {
+        await MainActor.run {
+            let reading = ModuleReading(module: .cpu, samples: [0.1, 0.2], valueText: "42%")
+            let base = ModuleLabel(reading: reading)
+            let same = ModuleLabel(reading: reading)
+            let differentValue = ModuleLabel(
+                reading: ModuleReading(module: .cpu, samples: [0.1, 0.2], valueText: "43%")
+            )
+            let differentSamples = ModuleLabel(
+                reading: ModuleReading(module: .cpu, samples: [0.1, 0.3], valueText: "42%")
+            )
+
+            #expect(base == same)
+            #expect(base != differentValue)
+            #expect(base != differentSamples)
+        }
+    }
+
+    // menu-bar-widget — MBW-14: a different module set is a different content,
+    // so hiding a module can never be gated away as "unchanged".
+    @Test func contentsWithDifferentModuleSetsCompareUnequal() async {
+        await MainActor.run {
+            let both = StatusItemContent(readings: Self.readings(cpuValue: "42%"))
+            let memoryOnly = StatusItemContent(
+                readings: [ModuleReading(module: .memory, samples: [0.5, 0.6], valueText: "59%")]
+            )
+
+            #expect(both != memoryOnly)
+        }
     }
 }
 
@@ -356,11 +486,47 @@ struct StatusItemMetricsTests {
 
     // menu-bar-widget — "Width budget"
     @Test func theMeasurementReadingsRenderFullScaleForEveryModule() async {
-        let readings = await StatusItemMetrics.measurementReadings
+        let readings = await StatusItemMetrics.measurementReadings(for: MetricModule.menuBarOrder)
 
         #expect(readings.map(\.module) == MetricModule.menuBarOrder)
         #expect(readings.allSatisfy { $0.valueText == "100%" })
         #expect(readings.allSatisfy { $0.samples.count == StatusItemReadings.sampleCount })
+    }
+
+    // menu-bar-widget — MBW-9: the measurement follows the module set it is
+    // asked about, in that order, which is what lets the controller re-measure
+    // when the user hides or reorders a module.
+    @Test func theMeasurementReadingsFollowTheRequestedModuleSet() async {
+        let single = await StatusItemMetrics.measurementReadings(for: [.memory])
+        let reversed = await StatusItemMetrics.measurementReadings(for: [.memory, .cpu])
+
+        #expect(single.map(\.module) == [.memory])
+        #expect(single.allSatisfy { $0.valueText == "100%" })
+        #expect(reversed.map(\.module) == [.memory, .cpu])
+    }
+
+    // menu-bar-widget — "One-module width": a single module at full scale must
+    // stay under 130 pt, so hiding a module visibly frees menu bar space.
+    @Test func oneModuleAtFullScaleStaysUnderTheOneModuleBudget() async {
+        let readings = await StatusItemMetrics.measurementReadings(for: [.memory])
+        let width = await Self.contentWidth(for: readings)
+
+        #expect(width > 0, "the widget measured as empty")
+        #expect(width < 130)
+    }
+
+    // menu-bar-widget — "Width budget": both modules at full scale stay under
+    // the 230 pt budget, and one module is strictly narrower than two.
+    @Test func twoModulesAtFullScaleStayUnderTheWidgetBudget() async {
+        let both = await StatusItemMetrics.measurementReadings(for: MetricModule.menuBarOrder)
+        let single = await StatusItemMetrics.measurementReadings(for: [.memory])
+
+        let bothWidth = await Self.contentWidth(for: both)
+        let singleWidth = await Self.contentWidth(for: single)
+
+        #expect(bothWidth > 0, "the widget measured as empty")
+        #expect(bothWidth < 230)
+        #expect(singleWidth < bothWidth)
     }
 
     // menu-bar-widget — "Every module renders a sparkline"
@@ -384,6 +550,7 @@ struct StatusItemMetricsTests {
         let values = (0..<30).map { 0.5 + Double($0) / 300 }
 
         let readings = StatusItemReadings.build(
+            modules: MetricModule.menuBarOrder,
             cpu: nil,
             cpuHistory: MetricHistory(capacity: 120),
             memory: Self.memorySnapshot(fraction: 0.59),
@@ -404,6 +571,7 @@ struct StatusItemMetricsTests {
     // menu-bar-widget — "MEM empty history still has a sparkline"
     @Test func theMemoryModuleKeepsItsSparklineWithoutHistory() async throws {
         let readings = StatusItemReadings.build(
+            modules: MetricModule.menuBarOrder,
             cpu: nil,
             cpuHistory: MetricHistory(capacity: 120),
             memory: nil,
@@ -421,7 +589,7 @@ struct StatusItemMetricsTests {
 
         // menu-bar-widget — "Width budget": both modules at "100%" with a full
         // sparkline, which is the widest content the widget can ever render.
-        let fullScale = await StatusItemMetrics.measurementReadings
+        let fullScale = await StatusItemMetrics.measurementReadings(for: MetricModule.menuBarOrder)
         let fullWidth = await Self.contentWidth(for: fullScale)
 
         #expect(fullWidth > 0, "the widget measured as empty")

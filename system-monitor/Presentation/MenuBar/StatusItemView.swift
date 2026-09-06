@@ -27,19 +27,23 @@ nonisolated enum StatusItemReadings {
     /// Number of history samples the menu bar sparkline shows.
     static let sampleCount = 60
 
-    /// One reading per module, in `MetricModule.menuBarOrder`.
+    /// One reading per module in `modules`, in that order (MBW-1).
     ///
-    /// Each module binds to its own pair of published values: CPU to the CPU
-    /// snapshot and history, MEM to the memory snapshot and history. Both read
-    /// `0%` with an empty sparkline until their first snapshot arrives, so the
-    /// widget never renders a static placeholder.
+    /// `modules` is the user's chosen subset (`SettingsState.menuBarModules`,
+    /// default `MetricModule.menuBarOrder`), so a hidden module produces no
+    /// reading and a reordered list reorders the widget. Each module binds to
+    /// its own pair of published values: CPU to the CPU snapshot and history,
+    /// MEM to the memory snapshot and history. Both read `0%` with an empty
+    /// sparkline until their first snapshot arrives, so the widget never
+    /// renders a static placeholder.
     static func build(
+        modules: [MetricModule],
         cpu: CPUSnapshot?,
         cpuHistory: MetricHistory,
         memory: MemorySnapshot?,
         memoryHistory: MetricHistory
     ) -> [ModuleReading] {
-        MetricModule.menuBarOrder.map { module in
+        modules.map { module in
             switch module {
             case .cpu:
                 ModuleReading(
@@ -100,19 +104,29 @@ enum StatusItemMetrics {
         return measured.rounded(.up)
     }()
 
-    /// Widest content the widget can render: every module at `"100%"` with a
-    /// full sparkline. Used once to size the status item.
-    static let measurementReadings: [ModuleReading] = MetricModule.menuBarOrder.map { module in
-        ModuleReading(
-            module: module,
-            samples: Array(repeating: 1, count: StatusItemReadings.sampleCount),
-            valueText: PercentFormatter.integer(1)
-        )
+    /// Widest content `modules` can render: every one of them at `"100%"` with
+    /// a full sparkline, in the given order.
+    ///
+    /// A function rather than a constant because the module set is the user's
+    /// (MBW-1): the status item is re-measured from this whenever that set
+    /// changes, and never for a value tick (MBW-9).
+    static func measurementReadings(for modules: [MetricModule]) -> [ModuleReading] {
+        modules.map { module in
+            ModuleReading(
+                module: module,
+                samples: Array(repeating: 1, count: StatusItemReadings.sampleCount),
+                valueText: PercentFormatter.integer(1)
+            )
+        }
     }
 }
 
 /// Presentational status item content: one label per reading, no environment.
-struct StatusItemContent: View {
+///
+/// `Equatable` so SwiftUI skips the whole widget body while the readings stand
+/// still, and each label is `.equatable()` so an unchanged module is skipped
+/// even when its neighbour moved (MBW-14).
+struct StatusItemContent: View, Equatable {
 
     let readings: [ModuleReading]
 
@@ -120,6 +134,7 @@ struct StatusItemContent: View {
         HStack(spacing: StatusItemMetrics.moduleSpacing) {
             ForEach(readings) { reading in
                 ModuleLabel(reading: reading)
+                    .equatable()
             }
         }
         .padding(.horizontal, StatusItemMetrics.horizontalPadding)
@@ -127,23 +142,37 @@ struct StatusItemContent: View {
     }
 }
 
-/// Container reading the published metrics from the environment.
+/// Container reading the published metrics and the user's module list from the
+/// environment.
 ///
-/// It forwards both metric pairs to `StatusItemReadings`; the mapping itself
-/// lives there so it stays testable without rendering this view.
+/// It forwards the module list and both metric pairs to `StatusItemReadings`;
+/// the mapping itself lives there so it stays testable without rendering this
+/// view.
 struct StatusItemView: View {
 
     @Environment(MetricsState.self) private var state
 
+    /// The user's module list (MBW-1). Optional because the status item is
+    /// hosted before the composition root exists in every preview and in the
+    /// controller path that has no `SettingsState` yet; an absent settings
+    /// object falls back to the ST-1 default order rather than trapping.
+    @Environment(SettingsState.self) private var settings: SettingsState?
+
+    private var modules: [MetricModule] {
+        settings?.menuBarModules ?? MetricModule.menuBarOrder
+    }
+
     var body: some View {
         StatusItemContent(
             readings: StatusItemReadings.build(
+                modules: modules,
                 cpu: state.cpu,
                 cpuHistory: state.cpuHistory,
                 memory: state.memory,
                 memoryHistory: state.memoryHistory
             )
         )
+        .equatable()
     }
 }
 
@@ -152,9 +181,14 @@ struct StatusItemRootView: View {
 
     let state: MetricsState
 
+    /// The settings object, when the composition root has one. `nil` keeps the
+    /// default module order (see `StatusItemView.settings`).
+    var settings: SettingsState? = nil
+
     var body: some View {
         StatusItemView()
             .environment(state)
+            .environment(settings)
     }
 }
 
@@ -162,8 +196,10 @@ struct StatusItemRootView: View {
 ///
 /// The label and sparkline carry the module accent; the value uses the system
 /// label colour so it stays legible on dark and light menu bars
-/// (menu-bar-widget "Legibility").
-private struct ModuleLabel: View {
+/// (menu-bar-widget "Legibility"). `Equatable` and internal rather than
+/// private, so MBW-14 pins the redraw-gating contract directly on the unit
+/// SwiftUI skips.
+struct ModuleLabel: View, Equatable {
 
     let reading: ModuleReading
 
@@ -200,6 +236,13 @@ private struct ModuleLabel: View {
 }
 
 #Preview("Status item at full scale") {
-    StatusItemContent(readings: StatusItemMetrics.measurementReadings)
+    StatusItemContent(
+        readings: StatusItemMetrics.measurementReadings(for: MetricModule.menuBarOrder)
+    )
+    .padding()
+}
+
+#Preview("Status item with MEM hidden") {
+    StatusItemContent(readings: StatusItemMetrics.measurementReadings(for: [.cpu]))
         .padding()
 }

@@ -5,25 +5,93 @@ import SwiftUI
 ///
 /// The widget updates once per second, so its geometry is fixed up front: the
 /// hosting view never resizes itself from its content and the status item length
-/// is measured once from the widest content the widget can render
+/// is measured from the widest content the current module set can render
 /// (menu-bar-widget "Fixed-width, jitter-free layout").
-final class StatusItemController {
+///
+/// It is an `NSObject` subclass because AppKit needs one: the context menu items
+/// use target-action, and the popover reports its transitions through
+/// `NSPopoverDelegate` (MBW-13).
+final class StatusItemController: NSObject, NSPopoverDelegate {
 
     private let state: MetricsState
+    private let settings: SettingsState
+    private let launchAtLogin: any LaunchAtLoginService
+
+    /// Told when the popover opens and closes, so the sampler can switch
+    /// cadence (MBW-13). Optional because the widget works without a cadence
+    /// consumer; the composition root always supplies one.
+    private let panelObserver: (any PanelVisibilityObserver)?
+
+    /// Opens the settings window (MBW-10). Injected rather than owned so this
+    /// controller and Cmd+, drive the same `SettingsWindowController` (ST-5).
+    private let openSettings: @MainActor () -> Void
+
     private let statusItem: NSStatusItem
     private let hostingView: PassthroughHostingView<StatusItemRootView>
     private let popover = NSPopover()
 
-    init(state: MetricsState) {
+    /// Module set the current `statusItem.length` was measured from.
+    ///
+    /// Keeping it here is what makes the re-measure conditional: a settings
+    /// commit that leaves the list alone — an interval edit, a failed save —
+    /// finds no difference and never touches the length (MBW-9).
+    private var measuredModules: [MetricModule] = []
+
+    /// Presents a failed registration change (LAL-4). Tests replace it with a
+    /// recorder, which is what proves the failure is surfaced exactly once
+    /// instead of propagating out of an AppKit action.
+    ///
+    /// An `LSUIElement` app is not active when the user picks the item from the
+    /// menu bar, so the alert is only reliably in front after `NSApp.activate()`.
+    /// If activation is refused the alert can still land behind another app's
+    /// window; that is the design's S3 risk and is settled by the manual check,
+    /// not by probing `NSApp.isActive`, which lags activation.
+    var errorPresenter: @MainActor (any Error) -> Void = { error in
+        NSApp.activate()
+        NSAlert(error: error).runModal()
+    }
+
+    init(
+        state: MetricsState,
+        settings: SettingsState,
+        launchAtLogin: any LaunchAtLoginService,
+        panelObserver: (any PanelVisibilityObserver)? = nil,
+        openSettings: @escaping @MainActor () -> Void = {}
+    ) {
         self.state = state
+        self.settings = settings
+        self.launchAtLogin = launchAtLogin
+        self.panelObserver = panelObserver
+        self.openSettings = openSettings
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        hostingView = PassthroughHostingView(rootView: StatusItemRootView(state: state))
+        hostingView = PassthroughHostingView(
+            rootView: StatusItemRootView(state: state, settings: settings)
+        )
 
         // 1 Hz content updates must not rewrite Auto Layout constraints (PRD 6.5).
         hostingView.sizingOptions = []
 
+        super.init()
+
         configureButton()
         configurePopover()
+
+        // `SettingsState` holds its observers for its whole life, so this
+        // closure must not retain the controller: MBW-12 requires the
+        // controller to die with its last external reference.
+        settings.observe { [weak self] updated in
+            self?.settingsDidChange(updated)
+        }
+    }
+
+    /// Removes the item from the status bar as the controller goes away, so no
+    /// orphaned widget survives it (MBW-12, debt W6).
+    ///
+    /// `isolated deinit` (SE-0371) hops to the main actor when the last
+    /// reference is dropped somewhere else, which is exactly what the tests do;
+    /// `MainActor.assumeIsolated` would trap there instead.
+    isolated deinit {
+        NSStatusBar.system.removeStatusItem(statusItem)
     }
 
     // MARK: - Setup
@@ -40,10 +108,10 @@ final class StatusItemController {
             hostingView.bottomAnchor.constraint(equalTo: button.bottomAnchor),
         ])
 
-        // Sized once from the widest sample. Every sub-width is constant — the
-        // label, the 60 pt sparkline and the value frame — so a live reading can
-        // never need more room than this.
-        statusItem.length = Self.measuredContentWidth()
+        // Sized from the widest sample the user's current module set can
+        // render. Every sub-width is constant — the label, the 60 pt sparkline
+        // and the value frame — so a live reading can never need more room.
+        remeasure(for: settings.menuBarModules)
 
         button.target = self
         button.action = #selector(handleClick(_:))
@@ -52,6 +120,13 @@ final class StatusItemController {
 
     private func configurePopover() {
         popover.behavior = .transient
+        popover.delegate = self
+
+        // `PanelView` paints `Palette.panelBackground` unconditionally, so the
+        // popover chrome is pinned to match it under any system appearance
+        // (MBW-11).
+        popover.appearance = NSAppearance(named: .darkAqua)
+
         popover.contentViewController = NSHostingController(
             rootView: PanelView().environment(state)
         )
@@ -63,12 +138,29 @@ final class StatusItemController {
     ///
     /// Measured on a throwaway hosting view with the default sizing options:
     /// `hostingView` reports no fitting size because its own options are empty.
-    private static func measuredContentWidth() -> CGFloat {
+    private static func measuredContentWidth(for modules: [MetricModule]) -> CGFloat {
         let measurementView = NSHostingView(
-            rootView: StatusItemContent(readings: StatusItemMetrics.measurementReadings)
+            rootView: StatusItemContent(
+                readings: StatusItemMetrics.measurementReadings(for: modules)
+            )
         )
         measurementView.layoutSubtreeIfNeeded()
         return measurementView.fittingSize.width
+    }
+
+    /// Measures `modules` and records the set the length now stands for.
+    private func remeasure(for modules: [MetricModule]) {
+        measuredModules = modules
+        statusItem.length = Self.measuredContentWidth(for: modules)
+    }
+
+    /// Re-measures the item when, and only when, the module set changed.
+    ///
+    /// Readings arrive once per second and must never reach this path: a
+    /// re-measure per value tick is precisely the jitter MBW-9 rules out.
+    private func settingsDidChange(_ settings: Settings) {
+        guard settings.menuBarModules != measuredModules else { return }
+        remeasure(for: settings.menuBarModules)
     }
 
     // MARK: - Layout contract (test-visible)
@@ -83,10 +175,43 @@ final class StatusItemController {
         hostingView.sizingOptions
     }
 
-    /// Width of the widget at full scale, measured independently of the live
-    /// hosting view.
-    var contentFittingWidth: CGFloat {
-        Self.measuredContentWidth()
+    /// Width of the widget rendering `modules` at full scale, measured
+    /// independently of the live hosting view.
+    func contentFittingWidth(for modules: [MetricModule]) -> CGFloat {
+        Self.measuredContentWidth(for: modules)
+    }
+
+    /// The installed status item. Test-visible so MBW-12 can hold it weakly and
+    /// watch it die with its controller.
+    var installedStatusItem: NSStatusItem {
+        statusItem
+    }
+
+    /// The settings object this controller observes. Test-visible so the
+    /// composition-root suite can prove the app builds exactly one
+    /// `SettingsState` (ST-4, ST-5): a second one would still render and still
+    /// re-measure, only from a list nobody else edits.
+    var observedSettings: SettingsState {
+        settings
+    }
+
+    /// The panel observer, if one was injected. Test-visible for the same
+    /// reason: a composition root that forgets it leaves the popover
+    /// transitions reaching nothing, which no cadence assertion can see while
+    /// the configured interval happens to equal the idle one (MBW-13, CM-1).
+    var panelVisibilityObserver: (any PanelVisibilityObserver)? {
+        panelObserver
+    }
+
+    /// Appearance pinned on the popover, or `nil` when it follows the system
+    /// (MBW-11).
+    var popoverAppearanceName: NSAppearance.Name? {
+        popover.appearance?.name
+    }
+
+    /// Whether the detail panel is on screen (MBW-13).
+    var isPanelOpen: Bool {
+        popover.isShown
     }
 
     // MARK: - Actions
@@ -99,7 +224,11 @@ final class StatusItemController {
         }
     }
 
-    private func togglePopover() {
+    /// Internal rather than private so MBW-13 can drive the guard directly.
+    /// There is deliberately no show-only entry point: while the popover is
+    /// shown this closes it instead of re-issuing `show`, so one open can never
+    /// be reported twice.
+    func togglePopover() {
         guard let button = statusItem.button else { return }
         if popover.isShown {
             popover.performClose(nil)
@@ -108,21 +237,103 @@ final class StatusItemController {
         }
     }
 
-    private func showContextMenu() {
-        let menu = NSMenu()
-        let quitItem = NSMenuItem(
-            title: "Quit System Monitor",
-            action: #selector(NSApplication.terminate(_:)),
-            keyEquivalent: "q"
-        )
-        quitItem.target = NSApp
-        menu.addItem(quitItem)
+    // MARK: - NSPopoverDelegate (MBW-13)
 
+    /// Reported before the panel renders, so the sampler is already back at the
+    /// configured cadence by the time the first frame is drawn.
+    func popoverWillShow(_ notification: Notification) {
+        panelObserver?.panelDidOpen()
+    }
+
+    /// Also fires when a transient popover closes from a click outside it,
+    /// which `togglePopover()` never sees (design decision 17).
+    func popoverDidClose(_ notification: Notification) {
+        panelObserver?.panelDidClose()
+    }
+
+    // MARK: - Context menu presentation
+
+    private func showContextMenu() {
         // Standard pattern: attach the menu, trigger the button, then detach so
         // a subsequent left click reaches `handleClick` instead of opening the menu.
-        statusItem.menu = menu
+        statusItem.menu = makeContextMenu()
         statusItem.button?.performClick(nil)
         statusItem.menu = nil
+    }
+
+    // MARK: - Context menu (MBW-10, LAL-4)
+
+    /// Builds the menu from the pure `ContextMenuModel` (MBW-10).
+    ///
+    /// The registration status is read here, once per build, and never cached:
+    /// the user can change it in System Settings at any time, so a menu opened
+    /// later must show what is true then (LAL-4 "Status is re-read on every
+    /// build").
+    func makeContextMenu() -> NSMenu {
+        let menu = NSMenu()
+        for item in ContextMenuModel.items(launchAtLogin: launchAtLogin.status) {
+            menu.addItem(menuItem(for: item))
+        }
+        return menu
+    }
+
+    private func menuItem(for item: ContextMenuItem) -> NSMenuItem {
+        let menuItem = NSMenuItem(
+            title: item.title,
+            action: Self.selector(for: item.action),
+            keyEquivalent: Self.keyEquivalent(for: item.action)
+        )
+        menuItem.state = item.isChecked ? .on : .off
+        // Quit is the application's own action; everything else is ours.
+        menuItem.target = item.action == .quit ? NSApp : self
+        return menuItem
+    }
+
+    private static func selector(for action: ContextMenuItem.Action) -> Selector {
+        switch action {
+        case .openSettings: #selector(handleOpenSettings)
+        case .toggleLaunchAtLogin: #selector(toggleLaunchAtLogin)
+        case .openLoginItems: #selector(openLoginItems)
+        case .quit: #selector(NSApplication.terminate(_:))
+        }
+    }
+
+    /// Key equivalents are hints only: the menu is transient, so these are what
+    /// the user reads next to the item rather than working shortcuts. Cmd+,
+    /// itself is served by the app's main menu (ST-5).
+    private static func keyEquivalent(for action: ContextMenuItem.Action) -> String {
+        switch action {
+        case .openSettings: ","
+        case .quit: "q"
+        case .toggleLaunchAtLogin, .openLoginItems: ""
+        }
+    }
+
+    @objc private func handleOpenSettings() {
+        openSettings()
+    }
+
+    /// Registers or unregisters the app, following the live status (LAL-4).
+    ///
+    /// A refusal from the system reaches `errorPresenter` and stops there: an
+    /// AppKit action cannot throw, and the next menu build reads the status
+    /// again, so a failed change simply leaves the item as it was.
+    @objc func toggleLaunchAtLogin() {
+        do {
+            if launchAtLogin.status.isEnabled {
+                try launchAtLogin.disable()
+            } else {
+                try launchAtLogin.enable()
+            }
+        } catch {
+            errorPresenter(error)
+        }
+    }
+
+    /// Opens System Settings › Login Items, the only place the user can grant a
+    /// pending approval (LAL-4).
+    @objc func openLoginItems() {
+        launchAtLogin.openLoginItemsSettings()
     }
 }
 

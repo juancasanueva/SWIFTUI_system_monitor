@@ -59,7 +59,12 @@ final class MetricsSampler {
     private let cpuProvider: any CPUMetricsProvider
     private let memoryProvider: any MemoryMetricsProvider
     private let topologyProvider: any CoreTopologyProvider
-    private let interval: Duration
+    /// Cadence the loop sleeps for between iterations (CM-2).
+    ///
+    /// Mutable because the user can change it at runtime, but only through
+    /// `apply(interval:)`: `start()` copies it into the detached task, so a
+    /// silent assignment would not reach a running loop.
+    private(set) var interval: Duration
     private let startupGap: Duration
     private let clock: any Clock<Duration>
 
@@ -142,6 +147,29 @@ final class MetricsSampler {
                 gap = interval
             }
         }
+    }
+
+    /// Changes the sampling cadence at runtime (CM-2).
+    ///
+    /// The value is stored either way; a running loop is additionally restarted
+    /// because `start()` copies the interval into the detached task and a task
+    /// already parked in `clock.sleep` cannot pick up a new one. Applying the
+    /// interval already in effect returns immediately, so an idle cadence
+    /// refresh that resolves to the same value costs nothing.
+    ///
+    /// The restart re-seeds the CPU delta, so exactly one iteration after it
+    /// publishes no CPU snapshot while memory still publishes on that same
+    /// iteration (MM-5); the next iteration publishes CPU again. That one
+    /// publish-free tick is the whole price of an interval change.
+    func apply(interval newInterval: Duration) {
+        guard newInterval != interval else { return }
+
+        interval = newInterval
+
+        guard isRunning else { return }
+
+        stop()
+        start()
     }
 
     /// Cancels the sampling loop. Calling it while stopped does nothing.

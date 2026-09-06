@@ -162,19 +162,22 @@ system-monitor/
 │   └── Ports/                # CPUMetricsProvider, MemoryMetricsProvider (protocols)
 ├── Application/
 │   ├── MetricsSampler.swift  # timer loop, calls ports, publishes MetricsState
-│   └── MetricsState.swift    # @Observable, main-actor, holds snapshots + histories
+│   ├── MetricsState.swift    # @Observable, main-actor, holds snapshots + histories
+│   ├── SettingsState.swift   # @Observable, main-actor, holds the user's Settings (M4)
+│   └── SamplingCadence.swift # pure cadence rule + the panel-visibility controller (M4)
 ├── Infrastructure/
 │   ├── Mach/                 # MachCPUProvider (host_processor_info), MachMemoryProvider (host_statistics64)
-│   └── System/               # SysctlReader (perflevel core counts), LaunchAtLogin
+│   └── System/               # SysctlReader (perflevel core counts), UserDefaultsSettingsStore, SMAppServiceLaunchAtLogin
 └── Presentation/
-    ├── MenuBar/              # StatusItemView, ModuleLabel, Sparkline
+    ├── MenuBar/              # StatusItemView, ModuleLabel, Sparkline, ContextMenuModel
     ├── Panel/                # PanelView, CPUCard, MemoryCard
+    ├── Settings/             # SettingsView, SettingsWindowController (M4)
     └── Components/           # RingGauge, HistoryGraph, CoreBar, StackedBar, KeyValueRow
 ```
 
 - **Domain** has no imports beyond Foundation. Snapshots are plain `Sendable` structs.
 - **Ports** are protocols. Each has one real adapter in Infrastructure and one fake in the test target.
-- **Application** holds the only timer and the only `@Observable` state object. Views never touch Mach or IOKit.
+- **Application** holds the only timer and every `@Observable` state object. Since M4 there are two: `MetricsState` (samples and histories, written by the sampler) and `SettingsState` (the user's `Settings`, loaded once through the `SettingsStore` port and persisted on every accepted mutation). Views never touch Mach, IOKit or `UserDefaults`.
 - **Presentation** follows container/presentational: cards receive a snapshot and a history, nothing else.
 - v2 adds `Infrastructure/IOKit`, `Infrastructure/Metal`, a `GPUMetricsProvider` port and a `GPUCard`. No existing file should need more than a one-line change (registering the new module).
 
@@ -219,7 +222,7 @@ All v1 data sources are public, documented Mach APIs.
 - Swift 6 strict concurrency, default MainActor isolation for the module.
 - `MetricsSampler` runs its loop in a detached `Task` with `Task.sleep` at the interval, not a `Timer` on the main run loop.
 - Providers are `nonisolated` and `Sendable`; they return value-type snapshots.
-- `MetricsState` is `@MainActor @Observable`. Views read it via `@Environment`.
+- `MetricsState` and `SettingsState` are both `@MainActor @Observable`. Views read them via `@Environment`; non-view consumers of `SettingsState` (the sampling cadence controller, the status-item re-measure) register a synchronous observer instead.
 
 ### 6.5 Rendering
 - Sparkline, history graph, ring gauge and core bars are `Canvas`-based custom views. Swift Charts is acceptable for the panel history graphs but is too heavy for the 1 Hz menu bar sparkline.
@@ -300,6 +303,8 @@ Colors live in an asset catalog with light variants (F7). Hex values are estimat
 | `MenuBarExtra` limitations tempt a simpler implementation | Laggy or blank sparklines | Decision made: `NSStatusItem` + `NSHostingView` (R1.1). |
 | Per-second redraw of the status item costs CPU | Violates the under-1% goal | Redraw only when a value changed by ≥1 pt or the sparkline shifted; profile with Instruments in M4. |
 | Wide menu bar on small displays | Widget gets hidden by macOS | Keep under 230 pt (R1.7); allow hiding modules (F6). |
+
+Profiling note: the Instruments pass named in the third row (Time Profiler + SwiftUI template, panel closed then open) is a manual M4 task, not an automated one. Its measured CPU and RSS numbers are recorded in `openspec/changes/polish-module/apply-progress.md` alongside the rest of the M4 manual checklist.
 
 **Open questions**
 1. Should NET be reserved as a slot in the settings UI now, or left entirely to a future version? Proposed: leave it out of v1 entirely.

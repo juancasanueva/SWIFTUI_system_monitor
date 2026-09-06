@@ -2,8 +2,8 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft v2 (GPU deferred to v2 release) |
-| Date | 2026-09-04 |
+| Status | Draft v3 (Disk card added to v1 on 2026-09-06; GPU deferred to v2 release) |
+| Date | 2026-09-06 |
 | Platform | macOS 26.5+ (Xcode project deployment target), Apple Silicon first |
 | Stack | Swift 6, SwiftUI, AppKit (NSStatusItem / NSPopover), Mach APIs for metrics |
 | Reference images | `docs/reference/` (see section 4) |
@@ -12,11 +12,11 @@
 
 ## 1. Summary
 
-A lightweight, always-visible system monitor that lives in the macOS menu bar. It shows a compact widget with a live sparkline and current value for **CPU** and **RAM**. Clicking the widget opens a detail panel with a ring gauge, a breakdown of the metric, a longer history graph and, for CPU, per-core bars split into Performance and Efficiency cores.
+A lightweight, always-visible system monitor that lives in the macOS menu bar. It shows a compact widget with a live sparkline and current value for **CPU** and **RAM**. Clicking the widget opens a detail panel with a ring gauge, a breakdown of the metric, a longer history graph and, for CPU, per-core bars split into Performance and Efficiency cores. A third card shows how full the boot volume is and the live read and write throughput of the disk.
 
 The goal is a native, low-overhead replacement for tools like iStat Menus or Stats, focused only on the metrics that matter day to day, with a modern dark UI.
 
-**v1 scope is CPU and RAM only.** GPU is designed and specified in section 11 and ships in v2. The architecture is built so that adding it is additive: one provider adapter, one card, one widget module.
+**v1 scope is CPU, RAM and Disk.** The Disk card was added on 2026-09-06 after M4 shipped (section 5.7, milestone M5). GPU is designed and specified in section 11 and ships in v2. The architecture is built so that adding it is additive: one provider adapter, one card, one widget module.
 
 ---
 
@@ -32,13 +32,14 @@ The goal is a native, low-overhead replacement for tools like iStat Menus or Sta
 
 **Anti-goals (explicitly out of scope for v1).**
 - GPU (deferred to v2, see section 11).
-- Network, disk, battery, sensors, fans, temperatures.
+- Network, battery, sensors, fans, temperatures.
+- Disk beyond the single card: per-volume breakdown, external drives as separate cards, per-process I/O, SMART health, a disk menu bar module (open question 3).
 - Process list or per-process usage.
 - Notifications or alerts on thresholds.
 - Intel Macs as a first-class target (must not crash, but P/E split will be absent).
 - Mac App Store distribution (not needed for v1; revisit with GPU since IOKit access under sandbox is unverified).
 
-**Success metric.** The app runs for a full working day with under 1% average CPU and under 50 MB RSS, and the menu bar values match Activity Monitor within a reasonable margin (CPU ±3 pts, memory within 100 MB).
+**Success metric.** The app runs for a full working day with under 1% average CPU and under 50 MB RSS, and the menu bar values match Activity Monitor within a reasonable margin (CPU ±3 pts, memory within 100 MB). Disk Total and Free match Finder's figures for the boot volume within 100 MB.
 
 ---
 
@@ -47,7 +48,7 @@ The goal is a native, low-overhead replacement for tools like iStat Menus or Sta
 | ID | Feature | Priority |
 |---|---|---|
 | F1 | Menu bar widget: CPU and MEM, each with sparkline + percentage | P0 |
-| F2 | Detail panel opened on click, two stacked cards (CPU, Memory) | P0 |
+| F2 | Detail panel opened on click, three stacked cards (CPU, Memory, Disk) | P0 |
 | F3 | CPU card: ring gauge, User/System/P-Cores/E-Cores values, history graph, per-core bars | P0 |
 | F4 | Memory card: ring gauge, Used/Total/Wired/Compressed values, stacked legend, history graph | P0 |
 | F5 | Launch at login toggle | P1 |
@@ -55,6 +56,7 @@ The goal is a native, low-overhead replacement for tools like iStat Menus or Sta
 | F7 | Light mode support (dark is the default and reference design) | P2 |
 | F8 | GPU module: widget slot + GPU card (section 11) | v2 |
 | F9 | Network module (as in the original reference bar) | Future |
+| F10 | Disk card: ring gauge, Used/Free/Total values, read and write throughput (section 5.7) | P0 |
 
 ---
 
@@ -91,6 +93,14 @@ CPU [sparkline] 26%   MEM [sparkline] 59%   NET [sparkline] ↓207B ↑232B
 ### 4.4 `04-panel-gpu.png` — GPU card (v2 reference)
 Kept for v2. Described in section 11.
 
+### 4.5 `05-panel-disk.png` — Disk card
+- Header: internal drive icon + "Disk".
+- Left: ring gauge `87.4%`, sublabel `Disk`. The ring is green; in the reference it fades from amber at the start of the arc to green at the end.
+- Right: `Used 432,07 GB`, `Free 62,29 GB`, `Total 494,35 GB`. Used + Free equals Total, so Used is derived, not measured.
+- Footer: two throughput values side by side, `27,1 MB/s` (read) and `2,2 MB/s` (write), each preceded by a small green document icon.
+- No history graph and no stacked bar. This is the only card without a graph.
+- `494,35 GB` is the decimal capacity Finder reports for a 512 GB Apple SSD, so capacity uses decimal units (1 GB = 10⁹ bytes), unlike the Memory card. Locale-aware decimal separator as in 4.3.
+
 ---
 
 ## 5. Functional Requirements
@@ -106,7 +116,7 @@ Kept for v2. Described in section 11.
 
 ### 5.2 Detail panel (F2)
 - R2.1 Presented as an `NSPopover` anchored to the status item, transient behavior (closes on outside click or Esc).
-- R2.2 Fixed width around 320 pt. Height fits content; the cards stack vertically with 12 pt gaps.
+- R2.2 Fixed width around 320 pt. Height fits content; the cards stack vertically with 12 pt gaps, in the order CPU, Memory, Disk.
 - R2.3 Dark card background (see 7.1), 12 pt corner radius, no visible borders.
 - R2.4 The panel keeps updating live while open, at the same sampling interval.
 
@@ -137,8 +147,8 @@ Kept for v2. Described in section 11.
 - R4.6 History graph shows the last 120 samples of the Used percentage.
 
 ### 5.5 Sampling and history
-- R5.1 A single `MetricsSampler` drives both providers on one timer. Default interval 1 s, configurable 0.5–5 s.
-- R5.2 History is a fixed-capacity ring buffer per metric (capacity 120). No unbounded arrays.
+- R5.1 A single `MetricsSampler` drives every provider (CPU, memory, disk) on one timer. Default interval 1 s, configurable 0.5–5 s.
+- R5.2 History is a fixed-capacity ring buffer per metric (capacity 120). No unbounded arrays. Disk keeps no history in v1 (R10.8).
 - R5.3 Sampling runs off the main thread. Only the published snapshot crosses to the main actor.
 - R5.4 When the panel is closed, the widget still samples at the configured rate (it needs the sparkline). A P1 optimization may lower the rate to 2 s while the panel is closed.
 
@@ -147,6 +157,23 @@ Kept for v2. Described in section 11.
 - R6.2 Launch at Login via `SMAppService.mainApp` (F5).
 - R6.3 Settings stored in `UserDefaults` via a small `SettingsStore` (F6).
 - R6.4 Quit from the context menu.
+
+### 5.7 Disk card (F10)
+- R10.1 Scope: capacity is reported for the boot volume (`/`) only, aligned with Finder. Throughput is the sum over every block storage device present, aligned with Activity Monitor's Disk tab.
+- R10.2 Capacity source: `URL(fileURLWithPath: "/").resourceValues(forKeys:)` with `.volumeTotalCapacityKey` and `.volumeAvailableCapacityForImportantUsageKey`. Definitions:
+  - Total = `volumeTotalCapacity`
+  - Free = `volumeAvailableCapacityForImportantUsage` (includes purgeable space; this is the figure Finder shows as Available)
+  - Used = Total − Free
+  - Percentage = Used / Total
+- R10.3 Throughput source: IOKit. Iterate `IOServiceMatching("IOBlockStorageDriver")`, read each driver's `Statistics` dictionary, take `Bytes (Read)` and `Bytes (Write)` (`kIOBlockStorageDriverStatisticsBytesReadKey` and `kIOBlockStorageDriverStatisticsBytesWrittenKey`, declared in `IOKit/storage/IOBlockStorageDriver.h`; the same counters `iostat` reads). Counters are cumulative: the rate is the delta between two samples divided by the elapsed wall time, never a single read (same rule as R3.1). The first sample after start publishes capacity with throughput unavailable.
+- R10.4 Counter resets: if a summed delta is negative (drive ejected or mounted, counter wrapped), that tick reports throughput as unavailable and re-seeds the baseline. The next tick reports normally.
+- R10.5 Formatting: capacity uses `ByteCountFormatStyle(style: .file)` (decimal units, so a 512 GB SSD reads `494,35 GB` as in Finder). Throughput is formatted as decimal bytes per second with one fraction digit and a `/s` suffix (`27,1 MB/s`). Separators follow the system locale as in R4.4.
+- R10.6 Layout per 4.5: header, ring gauge with `Disk` sublabel, three key/value rows Used, Free, Total, and a footer row with read then write throughput. Read and write icons must differ (the reference uses the same icon for both; that is a legibility defect, not a requirement) and each carries an accessibility label of "Read" or "Write".
+- R10.7 Cadence: throughput is sampled on every tick. Capacity is refreshed at most every 10 s and the last values are reused in between; the important-usage query can cost more than a plain `statfs` and the value changes slowly.
+- R10.8 No history graph and no ring buffer for disk in v1. `MetricsState` holds only the latest `DiskSnapshot`.
+- R10.9 Unavailable states, mirroring G5: if no `IOBlockStorageDriver` statistics are readable, the footer shows an em dash for both rates with an accessibility label of "unavailable" while capacity keeps rendering. If the capacity query throws, the card shows an "Unavailable" state instead of a fake 0%.
+- R10.10 Gauge and icons use `diskAccent` (7.1). The amber-to-green gradient seen in the reference is P2 polish, not a v1 requirement.
+- R10.11 Disk has no menu bar module in v1 (open question 3). `MetricModule` and the settings module list are unchanged.
 
 ---
 
@@ -158,8 +185,8 @@ Kept for v2. Described in section 11.
 system-monitor/
 ├── App/                      # @main, AppDelegate, status item setup, DI composition root
 ├── Domain/
-│   ├── Models/               # CPUSnapshot, MemorySnapshot, MetricHistory
-│   └── Ports/                # CPUMetricsProvider, MemoryMetricsProvider (protocols)
+│   ├── Models/               # CPUSnapshot, MemorySnapshot, DiskSnapshot, MetricHistory
+│   └── Ports/                # CPUMetricsProvider, MemoryMetricsProvider, DiskMetricsProvider (protocols)
 ├── Application/
 │   ├── MetricsSampler.swift  # timer loop, calls ports, publishes MetricsState
 │   ├── MetricsState.swift    # @Observable, main-actor, holds snapshots + histories
@@ -167,19 +194,20 @@ system-monitor/
 │   └── SamplingCadence.swift # pure cadence rule + the panel-visibility controller (M4)
 ├── Infrastructure/
 │   ├── Mach/                 # MachCPUProvider (host_processor_info), MachMemoryProvider (host_statistics64)
-│   └── System/               # SysctlReader (perflevel core counts), UserDefaultsSettingsStore, SMAppServiceLaunchAtLogin
+│   ├── IOKit/                # IOKitDiskProvider (IOBlockStorageDriver statistics + VolumeCapacityReader) (M5)
+│   └── System/               # SysctlReader (perflevel core counts), VolumeCapacityReader (URLResourceValues, M5), UserDefaultsSettingsStore, SMAppServiceLaunchAtLogin
 └── Presentation/
     ├── MenuBar/              # StatusItemView, ModuleLabel, Sparkline, ContextMenuModel
-    ├── Panel/                # PanelView, CPUCard, MemoryCard
+    ├── Panel/                # PanelView, CPUCard, MemoryCard, DiskCard (M5)
     ├── Settings/             # SettingsView, SettingsWindowController (M4)
-    └── Components/           # RingGauge, HistoryGraph, CoreBar, StackedBar, KeyValueRow
+    └── Components/           # RingGauge, HistoryGraph, CoreBar, StackedBar, KeyValueRow, ThroughputLabel (M5)
 ```
 
 - **Domain** has no imports beyond Foundation. Snapshots are plain `Sendable` structs.
 - **Ports** are protocols. Each has one real adapter in Infrastructure and one fake in the test target.
 - **Application** holds the only timer and every `@Observable` state object. Since M4 there are two: `MetricsState` (samples and histories, written by the sampler) and `SettingsState` (the user's `Settings`, loaded once through the `SettingsStore` port and persisted on every accepted mutation). Views never touch Mach, IOKit or `UserDefaults`.
-- **Presentation** follows container/presentational: cards receive a snapshot and a history, nothing else.
-- v2 adds `Infrastructure/IOKit`, `Infrastructure/Metal`, a `GPUMetricsProvider` port and a `GPUCard`. No existing file should need more than a one-line change (registering the new module).
+- **Presentation** follows container/presentational: cards receive a snapshot and a history, nothing else. The Disk card receives only a snapshot (R10.8).
+- v2 adds `Infrastructure/Metal`, a second reader in `Infrastructure/IOKit` (created for Disk in M5), a `GPUMetricsProvider` port and a `GPUCard`. No existing file should need more than a one-line change (registering the new module).
 
 ### 6.2 Key domain models
 
@@ -206,6 +234,23 @@ struct MemorySnapshot: Sendable {
                                // App, Wired and Compressed do not account for
     var fraction: Double { Double(used) / Double(total) }
 }
+
+struct DiskCounters: Sendable {          // raw value returned by the DiskMetricsProvider port
+    let total: UInt64                    // boot volume capacity, bytes
+    let free: UInt64                     // available for important usage, bytes
+    let bytesRead: UInt64                // cumulative, summed over all block storage drivers
+    let bytesWritten: UInt64             // cumulative, summed over all block storage drivers
+    let timestamp: ContinuousClock.Instant
+}
+
+struct DiskSnapshot: Sendable {
+    let total: UInt64
+    let free: UInt64
+    let used: UInt64                     // total − free
+    let readBytesPerSecond: Double?      // nil on the first sample and after a counter reset
+    let writeBytesPerSecond: Double?
+    var fraction: Double { Double(used) / Double(total) }
+}
 ```
 
 ### 6.3 Data sources and known constraints
@@ -215,8 +260,10 @@ struct MemorySnapshot: Sendable {
 | CPU ticks | `host_processor_info(PROCESSOR_CPU_LOAD_INFO)` | Must `vm_deallocate` the returned buffer. Works in sandbox. |
 | P/E core counts | `sysctl hw.perflevel0.logicalcpu`, `hw.perflevel1.logicalcpu` | perflevel0 is the higher-performance level on Apple Silicon. Absent on Intel. |
 | Memory | `host_statistics64(HOST_VM_INFO64)` | Works in sandbox. |
+| Disk capacity | `URLResourceValues` `.volumeTotalCapacityKey`, `.volumeAvailableCapacityForImportantUsageKey` on `/` | Public Foundation API. The important-usage figure includes purgeable space and matches Finder's Available. |
+| Disk throughput | IOKit `IOBlockStorageDriver` → `Statistics` → `Bytes (Read)`, `Bytes (Write)` | Keys are public constants in `IOKit/storage/IOBlockStorageDriver.h`; same source as `iostat`. Cumulative per device, delta per tick. Unverified under App Sandbox (v1 is not sandboxed). |
 
-All v1 data sources are public, documented Mach APIs.
+All v1 data sources are public APIs: Mach for CPU and memory, Foundation and IOKit block storage statistics for disk.
 
 ### 6.4 Concurrency
 - Swift 6 strict concurrency, default MainActor isolation for the module.
@@ -248,6 +295,7 @@ All v1 data sources are public, documented Mach APIs.
 | `memCompressed` | `#F5D90A` | Compressed segment |
 | `memCached` | `#4D8DFF` | Cached segment |
 | `memFree` | `#3DD68C` | Free segment |
+| `diskAccent` | `#3DD68C` | Disk gauge and throughput icons (same green as `memFree`; the reference's amber start of the arc is P2, R10.10) |
 | `gpuAccent` | `#3DD68C` | GPU gauge and graph (v2) |
 
 Colors live in an asset catalog with light variants (F7). Hex values are estimates from the screenshots and should be sampled precisely during implementation.
@@ -270,15 +318,17 @@ Colors live in an asset catalog with light variants (F7). Hex values are estimat
 └─────────────────────────────────────────┘
 ```
 
+The Disk card omits the history graph row; its footer is the read/write throughput row (4.5).
+
 ---
 
 ## 8. Testing Strategy (Strict TDD)
 
 - Framework: Swift Testing (`@Test`, `#expect`).
-- **Domain**: pure functions. Tick-delta to percentage, memory breakdown math, ring buffer behavior, P/E grouping. Written first, no mocks needed.
-- **Application**: `MetricsSampler` tested with fake providers injected through the ports. Assert that snapshots are published, history capacity holds, and a throwing provider does not stop the loop.
-- **Infrastructure**: thin integration tests that only assert shape (core count > 0, total memory > 0). These are the only tests that hit real system APIs and are tagged `.tags(.integration)`.
-- **Presentation**: snapshot-free. Cards are given fixed snapshots in Previews; a couple of unit tests cover formatting helpers (percentage strings, byte formatting under a fixed locale).
+- **Domain**: pure functions. Tick-delta to percentage, memory breakdown math, disk used/fraction math, cumulative byte counters to bytes per second including the negative-delta reset, ring buffer behavior, P/E grouping. Written first, no mocks needed.
+- **Application**: `MetricsSampler` tested with fake providers injected through the ports. Assert that snapshots are published, history capacity holds, a throwing provider does not stop the loop, the first tick publishes disk capacity without throughput, and capacity is refreshed on the 10 s cadence (R10.7).
+- **Infrastructure**: thin integration tests that only assert shape (core count > 0, total memory > 0, boot volume total > 0, at least one block storage driver found). These are the only tests that hit real system APIs and are tagged `.tags(.integration)`.
+- **Presentation**: snapshot-free. Cards are given fixed snapshots in Previews; a couple of unit tests cover formatting helpers (percentage strings, byte formatting under a fixed locale, decimal capacity and `MB/s` throughput strings).
 - Target: 80%+ on Domain and Application. Infrastructure is exempt from coverage goals.
 
 ---
@@ -290,8 +340,9 @@ Colors live in an asset catalog with light variants (F7). Hex values are estimat
 | M1 | Skeleton | Status item shows static "CPU 0%" text, popover opens and closes, `LSUIElement` set. |
 | M2 | CPU end to end | Mach provider, sampler, sparkline in the bar, CPU card with gauge and per-core bars. |
 | M3 | Memory | vm_statistics provider, Memory card with stacked bar and legend. |
-| M4 | Polish | Launch at login, settings, light mode, animation and performance pass. Ship v1. |
-| M5 | GPU (v2) | Section 11. |
+| M4 | Polish | Launch at login, settings, light mode, animation and performance pass. |
+| M5 | Disk | `DiskMetricsProvider` port, IOKit throughput + volume capacity adapter, sampler extension, Disk card (section 5.7). Ship v1. |
+| M6 | GPU (v2) | Section 11. |
 
 ---
 
@@ -303,12 +354,16 @@ Colors live in an asset catalog with light variants (F7). Hex values are estimat
 | `MenuBarExtra` limitations tempt a simpler implementation | Laggy or blank sparklines | Decision made: `NSStatusItem` + `NSHostingView` (R1.1). |
 | Per-second redraw of the status item costs CPU | Violates the under-1% goal | Redraw only when a value changed by ≥1 pt or the sparkline shifted; profile with Instruments in M4. |
 | Wide menu bar on small displays | Widget gets hidden by macOS | Keep under 230 pt (R1.7); allow hiding modules (F6). |
+| `IOBlockStorageDriver` counters are per device and cumulative | Wrong rate after an eject or mount, or on multi-disk Macs | Sum over the drivers present on each tick, re-seed on a negative delta (R10.4), cover with a fake provider. |
+| Important-usage capacity query at 1 Hz | Sampling CPU creeps toward the 1% budget | Refresh capacity at most every 10 s (R10.7); profile in M5. |
+| Popover grows with a third card | Panel taller than short displays allow | Height still fits content (R2.2); the Disk card is the shortest since it has no graph. |
 
 Profiling note: the Instruments pass named in the third row (Time Profiler + SwiftUI template, panel closed then open) is a manual M4 task, not an automated one. Its measured CPU and RSS numbers are recorded in `openspec/changes/polish-module/apply-progress.md` alongside the rest of the M4 manual checklist.
 
 **Open questions**
 1. Should NET be reserved as a slot in the settings UI now, or left entirely to a future version? Proposed: leave it out of v1 entirely.
 2. Is light mode a v1 requirement or acceptable as P2? Proposed: P2.
+3. Should Disk get a menu bar module (throughput sparkline or a percentage)? Proposed: no, panel card only in v1; revisit together with NET.
 
 ---
 
@@ -351,7 +406,7 @@ struct GPUSnapshot: Sendable {
 
 ### 11.5 Risks
 - `PerformanceStatistics` keys are undocumented and may be empty under sandbox. Mitigation: graceful unavailable state (G5), no sandbox, re-verify on each macOS beta.
-- This is the main reason GPU was deferred: v1 ships on public APIs only.
+- This is the main reason GPU was deferred: v1 ships on public APIs only. Disk's IOKit keys are public header constants (R10.3), unlike `PerformanceStatistics`.
 
 ### 11.6 Open question
 - System-wide GPU memory (proposed) versus per-process as in the reference screenshot.

@@ -112,12 +112,24 @@ Before the first snapshot the card MUST render the header, a gauge at `0.0%`, ro
 - WHEN the card renders
 - THEN no bar groups exist and the gauge text is `"0.0%"`
 
-### Requirement: Palette and card surface (Layer: Presentation) — 7.1, R2.3
+### Requirement: Palette and card surface (Layer: Presentation) — 7.1, R2.3, PRD 6.5
 
-`Palette` MUST expose the section 7.1 tokens as constants; the card MUST use `cardBackground` with a 12 pt corner radius and no border. Animations MUST be disabled when `accessibilityReduceMotion` is on.
+`Palette` MUST expose the section 7.1 tokens as constants; the card MUST use `cardBackground` with a 12 pt corner radius and no border. Animations MUST be disabled when `accessibilityReduceMotion` is on. The animation choice MUST live in `CPUCardModel.gaugeAnimation(reduceMotion:)`, which MUST return `nil` when reduce motion is on and the card's standard gauge animation otherwise; the view MUST apply exactly that result and MUST NOT decide the animation itself.
 
 #### Scenario: Token values
 
 - GIVEN `Palette`
 - WHEN `cpuAccent`, `cpuEfficiency`, `cardBackground`, `textSecondary` are read
 - THEN they equal `#4D8DFF`, `#3FC1C9`, `#1A2131`, `#8A93A6`
+
+#### Scenario: Reduce motion yields no animation
+
+- GIVEN `reduceMotion == true`
+- WHEN `CPUCardModel.gaugeAnimation(reduceMotion:)` is evaluated
+- THEN the result is `nil`
+
+#### Scenario: Motion allowed yields the gauge animation
+
+- GIVEN `reduceMotion == false`
+- WHEN `CPUCardModel.gaugeAnimation(reduceMotion:)` is evaluated
+- THEN the result is non-nil

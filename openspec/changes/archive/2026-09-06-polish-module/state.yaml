@@ -1,0 +1,38 @@
+schema: gentle-ai.sdd-state/v1
+change: polish-module
+milestone: PRD M4 "Polish" (features F5, F6, F7; R5.1, R5.4, R6.2, R6.3; ship v1)
+artifact_store: hybrid
+execution_mode: auto
+delivery_strategy: single-pr
+review_budget_lines: unlimited   # size:exception accepted up front by the user (2026-09-06)
+strict_tdd: true
+created: 2026-09-06
+status: ARCHIVED
+closed: 2026-09-06
+archived_to: openspec/changes/archive/2026-09-06-polish-module/
+archive_report: openspec/changes/archive/2026-09-06-polish-module/archive-report.md   # Engram sdd/polish-module/archive-report
+
+phases:
+  explore: done            # exploration.md, Engram sdd/polish-module/explore (8237); inline gate passed 2026-09-06
+  research: unselected     # user skipped research 2026-09-06 (exploration already verified SMAppService and settings-window facts)
+  propose: done            # proposal.md, Engram sdd/polish-module/proposal (8240); inline gate passed 2026-09-06
+  spec: done               # 6 delta specs (settings, launch-at-login, menu-bar-widget, cpu-metrics, cpu-card, memory-card), Engram sdd/polish-module/spec (8241); inline gate passed; destructive: MBW-1, MBW-9, CM-1
+  design: done             # rev 2 after validator (12 reconciliations), then rev 2.1 for the batch-H window-sizing correction; Engram sdd/polish-module/design (8242), spec (8241) upserted; gate closed 2026-09-06
+  tasks: done              # 43 tasks / 8 phases (47 checkboxes at close), Engram sdd/polish-module/tasks (8244); forecast 2200-2900 lines, size:exception recorded, no decision needed; batches A-G
+  apply: done              # batches A-G + correction H settled complete; 47/47 tasks; Engram 8246/8250/8251/8252/8257; manual 8.3-8.7 all run by the user 2026-09-06
+  verify: done             # rev 2 pass_with_warnings 2026-09-06 (supersedes rev 1): 23/23 requirements, 85/85 scenarios, 527 tests, 0 warnings, 0 blockers; open W-5/W-6/W-7/W-9; Engram 8254; validate evidence sha256:0445c505…852d
+  archive: done            # ARCHIVED 2026-09-06: user confirmed the destructive merges (MBW-1, MBW-9, CM-1); 6 delta specs merged into the specs of record (settings and launch-at-login created); folder moved; 8.7 CPU miss (1.6% vs the under-1% PRD 10 goal) accepted with a "redraw-optimization" follow-up
+
+pre_proposal:
+  status: confirmed
+  asked_on: 2026-09-06
+  confirmed_on: 2026-09-06
+  decisions:
+    light_mode_and_appearance: dark-only-v1 (OQ1/OQ2: palette untouched, popover pinned to darkAqua; F7 light mode stays P2 for a later change; no appearance setting)
+    module_visibility_order: hide-and-reorder-keep-one (OQ3: Settings can hide CPU or MEM and reorder; UI refuses to hide the last module; widget re-measures only when the set changes)
+    idle_cadence_r5_4: in-scope (OQ4: 2 s while the panel is closed, configured interval while open; restart at the fast rate on open; 2 min sparkline span while closed accepted)
+    research_lane: unselected
+  assumptions_unless_overridden:
+    instruments_profile: manual user-executed task with recorded numbers (OQ5)
+    settings_entry_points: context-menu item plus Cmd+, opening the same window (OQ6)
+    interval_control: stepper/slider 0.5-5 s in 0.5 s steps (OQ7)

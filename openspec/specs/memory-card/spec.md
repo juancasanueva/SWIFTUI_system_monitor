@@ -157,12 +157,18 @@ Before the first snapshot the card MUST render the header, gauge `"0.0%"`, the f
 - WHEN `memAccent`, `memWired`, `memCompressed`, `memCached`, `memFree` are read
 - THEN they equal `#F5A623`, `#E5484D`, `#F5D90A`, `#4D8DFF`, `#3DD68C`
 
-### Requirement: MC-10 Card surface and reduce motion (Layer: Presentation) — R2.3, 7.1
+### Requirement: MC-10 Card surface and reduce motion (Layer: Presentation) — R2.3, 7.1, PRD 6.5
 
-The card MUST use `cardBackground` with a 12 pt corner radius and no border. Animations MUST be disabled when `accessibilityReduceMotion` is on, using the same mechanism as `CPUCard`.
+The card MUST use `cardBackground` with a 12 pt corner radius and no border. Animations MUST be disabled when `accessibilityReduceMotion` is on, using the same mechanism as `CPUCard`: `MemoryCardModel.gaugeAnimation(reduceMotion:)` MUST return `nil` when reduce motion is on and the card's standard gauge animation otherwise, and the view MUST apply exactly that result.
 
 #### Scenario: Reduce motion
 
-- GIVEN `accessibilityReduceMotion == true`
-- WHEN the gauge value changes
-- THEN no animation is applied
+- GIVEN `reduceMotion == true`
+- WHEN `MemoryCardModel.gaugeAnimation(reduceMotion:)` is evaluated
+- THEN the result is `nil` and the gauge value changes without animation
+
+#### Scenario: Motion allowed
+
+- GIVEN `reduceMotion == false`
+- WHEN `MemoryCardModel.gaugeAnimation(reduceMotion:)` is evaluated
+- THEN the result is non-nil and equals the CPU card's gauge animation

@@ -10,3 +10,9 @@ xcuserdata/
 DerivedData/
 build/
 *.xcscmblueprint
+
+# CodeGraph index (per-checkout, never shared)
+.codegraph/
+
+# Pi local state
+.pi/

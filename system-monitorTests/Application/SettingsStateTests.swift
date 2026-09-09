@@ -297,6 +297,10 @@ struct SettingsStateTests {
             state: state,
             cpuProvider: provider,
             memoryProvider: FakeMemoryProvider(counts: [MemoryFixtures.eightGiB]),
+            diskProvider: FakeDiskProvider(
+                throughput: [],
+                capacities: [DiskFixtures.referenceCapacity]
+            ),
             topologyProvider: FakeCoreTopologyProvider(result: TickFixtures.performanceFirstTopology),
             interval: interval,
             clock: clock

@@ -163,4 +163,89 @@ struct MetricsStateTests {
 
         #expect(await state.memoryHistory.ordered == [0.2, 0.3])
     }
+
+    // MARK: - Disk
+
+    /// A capacity-only snapshot whose `free` distinguishes it from its
+    /// neighbours, built through the capacity initialiser the sampler uses.
+    private func diskSnapshot(free: UInt64) -> DiskSnapshot {
+        DiskSnapshot(
+            total: 494_354_000_000,
+            free: free,
+            readBytesPerSecond: nil,
+            writeBytesPerSecond: nil
+        )
+    }
+
+    @Test func freshStateHasNoDiskSnapshot() async {
+        let state = await MetricsState()
+
+        #expect(await state.disk == nil)
+    }
+
+    // disk-metrics — DM-11 "Apply stores the latest only"
+    @Test func applyingTwoDiskSnapshotsKeepsOnlyTheSecond() async {
+        let state = await MetricsState()
+        let first = diskSnapshot(free: 62_286_000_000)
+        let second = diskSnapshot(free: 12_000_000_000)
+
+        await state.apply(disk: first)
+        await state.apply(disk: second)
+
+        #expect(await state.disk == second)
+        #expect(await state.disk?.free == 12_000_000_000)
+    }
+
+    @Test func applyingADiskSnapshotStoresThatExactValue() async {
+        let state = await MetricsState()
+
+        await state.apply(disk: DiskFixtures.referenceSnapshot)
+
+        #expect(await state.disk == DiskFixtures.referenceSnapshot)
+        #expect(await state.disk?.readBytesPerSecond == 27_100_000)
+    }
+
+    // disk-metrics — DM-11 "Other state untouched"
+    @Test func applyingDiskLeavesTheCPUAndMemoryStateAlone() async {
+        let state = await MetricsState()
+
+        await state.apply(disk: DiskFixtures.referenceSnapshot)
+
+        #expect(await state.cpu == nil)
+        #expect(await state.memory == nil)
+        #expect(await state.cpuHistory.count == 0)
+        #expect(await state.memoryHistory.count == 0)
+        #expect(await state.disk != nil)
+    }
+
+    @Test func applyingCPUAndMemoryLeavesTheDiskStateAlone() async {
+        let state = await MetricsState()
+
+        await state.apply(cpu: snapshot(total: 0.42))
+        await state.apply(memory: memorySnapshot(fraction: 0.42))
+
+        #expect(await state.disk == nil)
+        #expect(await state.cpu != nil)
+        #expect(await state.memory != nil)
+    }
+
+    // disk-metrics — DM-11 "no disk history property exists". Reflection is the
+    // only runtime evidence of an absence; the CPU label proves the mirror is
+    // populated, so the disk assertion cannot pass vacuously.
+    @Test func theStateExposesNoDiskHistoryProperty() async {
+        let state = await MetricsState()
+
+        let labels = await MainActor.run {
+            Mirror(reflecting: state).children.compactMap(\.label)
+        }
+
+        #expect(labels.contains { $0.contains("cpuHistory") })
+        #expect(labels.contains { $0.contains("memoryHistory") })
+        #expect(
+            labels.contains {
+                let label = $0.lowercased()
+                return label.contains("disk") && label.contains("history")
+            } == false
+        )
+    }
 }

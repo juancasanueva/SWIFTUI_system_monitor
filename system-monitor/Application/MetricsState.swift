@@ -26,6 +26,13 @@ final class MetricsState {
     /// Recent memory fractions, oldest first, bounded by the same capacity.
     private(set) var memoryHistory: MetricHistory
 
+    /// Most recent disk reading, `nil` until the first capacity read lands.
+    ///
+    /// There is deliberately no `MetricHistory` beside it (R10.8): the disk
+    /// card renders a gauge and two instantaneous rates, and no view plots a
+    /// disk series, so a history would only be memory nobody reads.
+    private(set) var disk: DiskSnapshot?
+
     init(historyCapacity: Int = 120) {
         self.cpuHistory = MetricHistory(capacity: historyCapacity)
         self.memoryHistory = MetricHistory(capacity: historyCapacity)
@@ -44,5 +51,13 @@ final class MetricsState {
     func apply(memory snapshot: MemorySnapshot) {
         memory = snapshot
         memoryHistory.append(snapshot.fraction)
+    }
+
+    /// Publishes a disk reading, replacing the previous one.
+    ///
+    /// It stores and nothing else: unlike CPU and memory, disk keeps no
+    /// history (R10.8), so there is no series to append to here.
+    func apply(disk snapshot: DiskSnapshot) {
+        disk = snapshot
     }
 }

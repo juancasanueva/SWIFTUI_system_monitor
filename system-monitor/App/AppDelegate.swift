@@ -40,6 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             state: state,
             cpuProvider: MachCPUProvider(),
             memoryProvider: MachMemoryProvider(),
+            diskProvider: IOKitDiskProvider(capacity: VolumeCapacityReader()),
             topologyProvider: IORegistryCoreTopologyProvider(sysctl: SysctlReader()),
             interval: SamplingCadence.effective(
                 configured: settingsState.samplingInterval,

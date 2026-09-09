@@ -20,12 +20,17 @@ struct MetricsSamplerStepTests {
         state: MetricsState,
         provider: FakeCPUProvider,
         memoryProvider: FakeMemoryProvider = FakeMemoryProvider(counts: [MemoryFixtures.eightGiB]),
+        diskProvider: FakeDiskProvider = FakeDiskProvider(
+            throughput: [],
+            capacities: [DiskFixtures.referenceCapacity]
+        ),
         topology: CoreTopology = TickFixtures.performanceFirstTopology
     ) -> MetricsSampler {
         MetricsSampler(
             state: state,
             cpuProvider: provider,
             memoryProvider: memoryProvider,
+            diskProvider: diskProvider,
             topologyProvider: FakeCoreTopologyProvider(result: topology)
         )
     }
@@ -271,6 +276,355 @@ struct MetricsSamplerStepTests {
         #expect(await state.cpu == nil)
         #expect(await state.cpuHistory.count == 0)
     }
+
+    // MARK: - Disk
+    //
+    // Every scenario below drives `sampleOnce()` with scripted
+    // `ContinuousClock.Instant`s derived from `DiskFixtures.base`, so the
+    // cadence and the rates are read off the counters' own stamps and no case
+    // waits on wall-clock time (convention 19).
+
+    /// A capacity distinguishable from `DiskFixtures.referenceCapacity`, for
+    /// the cases that must tell a refreshed reading from a cached one.
+    private var refreshedCapacity: VolumeCapacity {
+        VolumeCapacity(total: 494_354_000_000, free: 40_000_000_000)
+    }
+
+    // disk-metrics — DM-6 "First step publishes capacity without throughput"
+    @Test func theFirstDiskStepPublishesCapacityWithBothRatesNil() async throws {
+        let state = await MetricsState()
+        let cpuProvider = FakeCPUProvider(samples: risingSamples())
+        let diskProvider = FakeDiskProvider(
+            throughput: [DiskFixtures.referencePrevious],
+            capacities: [DiskFixtures.referenceCapacity]
+        )
+        let sampler = await makeSampler(state: state, provider: cpuProvider, diskProvider: diskProvider)
+
+        await sampler.sampleOnce()
+
+        let disk = try #require(await state.disk)
+        #expect(disk.total == 494_354_000_000)
+        #expect(disk.free == 62_286_000_000)
+        #expect(disk.readBytesPerSecond == nil)
+        #expect(disk.writeBytesPerSecond == nil)
+        #expect(await state.memory != nil)
+        #expect(await state.cpu == nil)
+    }
+
+    // disk-metrics — DM-6 "Second step publishes rates"
+    @Test func theSecondDiskStepPublishesTheReferenceRates() async throws {
+        let state = await MetricsState()
+        let cpuProvider = FakeCPUProvider(samples: risingSamples())
+        let diskProvider = FakeDiskProvider(
+            throughput: [DiskFixtures.referencePrevious, DiskFixtures.referenceCurrent],
+            capacities: [DiskFixtures.referenceCapacity]
+        )
+        let sampler = await makeSampler(state: state, provider: cpuProvider, diskProvider: diskProvider)
+
+        await sampler.sampleOnce()
+        await sampler.sampleOnce()
+
+        let disk = try #require(await state.disk)
+        #expect(disk.readBytesPerSecond == 27_100_000)
+        #expect(disk.writeBytesPerSecond == 2_200_000)
+        #expect(await state.cpu != nil)
+    }
+
+    // disk-metrics — DM-6 "Call counts advance together"
+    @Test func allThreeProvidersAreReadOncePerStep() async {
+        let state = await MetricsState()
+        let cpuProvider = FakeCPUProvider(samples: risingSamples())
+        let memoryProvider = FakeMemoryProvider(counts: [MemoryFixtures.eightGiB])
+        let diskProvider = FakeDiskProvider(
+            throughput: DiskFixtures.climbing(steps: 3),
+            capacities: [DiskFixtures.referenceCapacity]
+        )
+        let sampler = await makeSampler(
+            state: state,
+            provider: cpuProvider,
+            memoryProvider: memoryProvider,
+            diskProvider: diskProvider
+        )
+
+        await sampler.sampleOnce()
+        await sampler.sampleOnce()
+        await sampler.sampleOnce()
+
+        #expect(cpuProvider.callCount == 3)
+        #expect(memoryProvider.callCount == 3)
+        #expect(diskProvider.throughputCallCount == 3)
+    }
+
+    // disk-metrics — DM-7 "One capacity read under 10 s"
+    @Test func capacityIsReadOnceWhileEveryStampStaysUnderTenSeconds() async throws {
+        let state = await MetricsState()
+        let cpuProvider = FakeCPUProvider(samples: risingSamples())
+        let diskProvider = FakeDiskProvider(
+            throughput: [0, 1, 2, 9.999].map { seconds in
+                DiskFixtures.counters(read: 1_000_000_000, written: 500_000_000, at: seconds)
+            },
+            capacities: [DiskFixtures.referenceCapacity, refreshedCapacity]
+        )
+        let sampler = await makeSampler(state: state, provider: cpuProvider, diskProvider: diskProvider)
+
+        var published: [UInt64] = []
+        for _ in 0..<4 {
+            await sampler.sampleOnce()
+            published.append(try #require(await state.disk).free)
+        }
+
+        #expect(diskProvider.capacityCallCount == 1)
+        #expect(diskProvider.throughputCallCount == 4)
+        #expect(published == Array(repeating: 62_286_000_000, count: 4))
+    }
+
+    // disk-metrics — DM-7 "Refresh once the cadence is crossed"
+    @Test func capacityIsReadAgainOnTheFirstStampTenSecondsLater() async throws {
+        let state = await MetricsState()
+        let cpuProvider = FakeCPUProvider(samples: risingSamples())
+        let diskProvider = FakeDiskProvider(
+            throughput: [0, 1, 2, 9.999, 10, 11].map { seconds in
+                DiskFixtures.counters(read: 1_000_000_000, written: 500_000_000, at: seconds)
+            },
+            capacities: [DiskFixtures.referenceCapacity, refreshedCapacity]
+        )
+        let sampler = await makeSampler(state: state, provider: cpuProvider, diskProvider: diskProvider)
+
+        var published: [UInt64] = []
+        for _ in 0..<6 {
+            await sampler.sampleOnce()
+            published.append(try #require(await state.disk).free)
+        }
+
+        #expect(diskProvider.capacityCallCount == 2)
+        #expect(diskProvider.throughputCallCount == 6)
+        #expect(published.prefix(4) == ArraySlice(Array(repeating: 62_286_000_000, count: 4)))
+        #expect(published.suffix(2) == [40_000_000_000, 40_000_000_000])
+    }
+
+    // disk-metrics — DM-6, DM-7 at the value level: the step carries the
+    // baseline, the cached capacity and the instant of the last capacity read
+    // forward, exactly as `CPUSamplingStep` carries its previous sample.
+    @Test func theDiskStepCarriesTheBaselineAndTheCapacityStampForward() throws {
+        let counters = [DiskFixtures.referencePrevious, DiskFixtures.referenceCurrent]
+        let provider = FakeDiskProvider(
+            throughput: counters,
+            capacities: [DiskFixtures.referenceCapacity]
+        )
+        let step = DiskSamplingStep(
+            provider: provider,
+            previous: nil,
+            capacity: nil,
+            capacityReadAt: nil
+        )
+
+        let first = step.advanced()
+        let firstSnapshot = try #require(first.snapshot)
+        #expect(firstSnapshot.readBytesPerSecond == nil)
+        #expect(firstSnapshot.total == 494_354_000_000)
+        #expect(first.next.previous == counters[0])
+        #expect(first.next.capacity == DiskFixtures.referenceCapacity)
+        #expect(first.next.capacityReadAt == counters[0].timestamp)
+
+        let second = first.next.advanced()
+        let secondSnapshot = try #require(second.snapshot)
+        #expect(secondSnapshot.readBytesPerSecond == 27_100_000)
+        #expect(second.next.previous == counters[1])
+        #expect(second.next.capacityReadAt == counters[0].timestamp)
+        #expect(provider.capacityCallCount == 1)
+    }
+
+    // MARK: - Disk failure isolation (DM-10)
+
+    /// Counters whose read and write totals grow by the reference deltas at
+    /// every scripted stamp, so any two of them produce non-nil rates.
+    private func climbingCounters(at stamps: [Double]) -> [DiskThroughputCounters] {
+        stamps.enumerated().map { index, seconds in
+            DiskFixtures.counters(
+                read: 1_000_000_000 + UInt64(index) * 27_100_000,
+                written: 500_000_000 + UInt64(index) * 2_200_000,
+                at: seconds
+            )
+        }
+    }
+
+    // disk-metrics — DM-10 "Throughput throws, capacity keeps rendering"
+    @Test func aThroughputThrowStillPublishesTheCachedCapacity() async throws {
+        let state = await MetricsState()
+        let cpuProvider = FakeCPUProvider(samples: risingSamples())
+        let diskProvider = FakeDiskProvider(
+            throughput: climbingCounters(at: [0, 1]),
+            capacities: [DiskFixtures.referenceCapacity],
+            throwThroughputOnCall: [1]
+        )
+        let sampler = await makeSampler(state: state, provider: cpuProvider, diskProvider: diskProvider)
+
+        await sampler.sampleOnce()
+        await sampler.sampleOnce()
+
+        let disk = try #require(await state.disk)
+        #expect(disk.free == 62_286_000_000)
+        #expect(disk.readBytesPerSecond == nil)
+        #expect(disk.writeBytesPerSecond == nil)
+        #expect(await state.cpu != nil)
+        #expect(diskProvider.throughputCallCount == 2)
+    }
+
+    // disk-metrics — DM-10, triangulating the case above: after a tick that
+    // published real rates, the throwing tick must replace them with `nil`
+    // rather than leave the stale pair on screen.
+    @Test func aThroughputThrowReplacesPublishedRatesWithNil() async throws {
+        let state = await MetricsState()
+        let cpuProvider = FakeCPUProvider(samples: risingSamples())
+        let diskProvider = FakeDiskProvider(
+            throughput: climbingCounters(at: [0, 1, 2]),
+            capacities: [DiskFixtures.referenceCapacity],
+            throwThroughputOnCall: [2]
+        )
+        let sampler = await makeSampler(state: state, provider: cpuProvider, diskProvider: diskProvider)
+
+        await sampler.sampleOnce()
+        await sampler.sampleOnce()
+
+        #expect(try #require(await state.disk).readBytesPerSecond == 27_100_000)
+
+        await sampler.sampleOnce()
+
+        let disk = try #require(await state.disk)
+        #expect(disk.readBytesPerSecond == nil)
+        #expect(disk.writeBytesPerSecond == nil)
+        #expect(disk.free == 62_286_000_000)
+    }
+
+    // disk-metrics — DM-10 "Throughput throw skips the refresh that tick"
+    @Test func aThroughputThrowSkipsThatTicksCapacityRefresh() async {
+        let state = await MetricsState()
+        let cpuProvider = FakeCPUProvider(samples: risingSamples())
+        let diskProvider = FakeDiskProvider(
+            throughput: climbingCounters(at: [0, 11]),
+            capacities: [DiskFixtures.referenceCapacity, refreshedCapacity],
+            throwThroughputOnCall: [1]
+        )
+        let sampler = await makeSampler(state: state, provider: cpuProvider, diskProvider: diskProvider)
+
+        await sampler.sampleOnce()
+        #expect(diskProvider.capacityCallCount == 1)
+
+        await sampler.sampleOnce()   // the tick that would have crossed 10 s throws
+        #expect(diskProvider.capacityCallCount == 1)
+
+        await sampler.sampleOnce()   // stamped 11 s, so the refresh happens here
+        #expect(diskProvider.capacityCallCount == 2)
+        #expect(await state.disk?.free == 40_000_000_000)
+    }
+
+    // disk-metrics — DM-10 "Capacity throws before any success"
+    @Test func aCapacityThrowBeforeAnySuccessPublishesNothingForDisk() async {
+        let state = await MetricsState()
+        let cpuProvider = FakeCPUProvider(samples: risingSamples())
+        let diskProvider = FakeDiskProvider(
+            throughput: climbingCounters(at: [0, 1]),
+            capacities: [DiskFixtures.referenceCapacity],
+            throwCapacityOnCall: [0, 1]
+        )
+        let sampler = await makeSampler(state: state, provider: cpuProvider, diskProvider: diskProvider)
+
+        await sampler.sampleOnce()
+        await sampler.sampleOnce()
+
+        #expect(await state.disk == nil)
+        #expect(await state.memory != nil)
+        #expect(diskProvider.capacityCallCount == 2)
+        #expect(diskProvider.throughputCallCount == 2)
+    }
+
+    // disk-metrics — DM-10 "Capacity throws after a success"
+    @Test func aCapacityThrowAfterASuccessKeepsTheCachedCapacity() async throws {
+        let state = await MetricsState()
+        let cpuProvider = FakeCPUProvider(samples: risingSamples())
+        let diskProvider = FakeDiskProvider(
+            throughput: climbingCounters(at: [0, 10]),
+            capacities: [DiskFixtures.referenceCapacity, refreshedCapacity],
+            throwCapacityOnCall: [1]
+        )
+        let sampler = await makeSampler(state: state, provider: cpuProvider, diskProvider: diskProvider)
+
+        await sampler.sampleOnce()
+        await sampler.sampleOnce()
+
+        let disk = try #require(await state.disk)
+        #expect(disk.free == 62_286_000_000)
+        #expect(disk.readBytesPerSecond == 2_710_000)
+        #expect(diskProvider.capacityCallCount == 2)
+    }
+
+    // disk-metrics — DM-10 "CPU throws, disk still publishes"
+    @Test func aThrowingCPUReadDoesNotPreventTheDiskPublish() async throws {
+        let state = await MetricsState()
+        let cpuProvider = FakeCPUProvider(samples: risingSamples(), throwOnCall: [0])
+        let diskProvider = FakeDiskProvider(
+            throughput: climbingCounters(at: [0]),
+            capacities: [DiskFixtures.referenceCapacity]
+        )
+        let sampler = await makeSampler(state: state, provider: cpuProvider, diskProvider: diskProvider)
+
+        await sampler.sampleOnce()
+
+        #expect(await state.disk != nil)
+        #expect(await state.cpu == nil)
+        #expect(await state.memory != nil)
+    }
+
+    // disk-metrics — the design's documented deviation from DM-10's SHOULD
+    // (decision 2, `design.md:206`): a throwing first tick has no stamp, so it
+    // reads capacity once, publishes it with nil rates, and leaves
+    // `capacityReadAt` unset so the next stamped tick reads capacity again.
+    @Test func aThroughputThrowWithNothingCachedReadsCapacityExactlyOnce() async throws {
+        let state = await MetricsState()
+        let cpuProvider = FakeCPUProvider(samples: risingSamples())
+        let diskProvider = FakeDiskProvider(
+            throughput: climbingCounters(at: [5]),
+            capacities: [DiskFixtures.referenceCapacity, refreshedCapacity],
+            throwThroughputOnCall: [0]
+        )
+        let sampler = await makeSampler(state: state, provider: cpuProvider, diskProvider: diskProvider)
+
+        await sampler.sampleOnce()
+
+        let firstDisk = try #require(await state.disk)
+        #expect(firstDisk.free == 62_286_000_000)
+        #expect(firstDisk.readBytesPerSecond == nil)
+        #expect(diskProvider.capacityCallCount == 1)
+
+        await sampler.sampleOnce()
+
+        #expect(diskProvider.capacityCallCount == 2)
+        #expect(await state.disk?.free == 40_000_000_000)
+    }
+
+    // The same deviation at the value level: the step returned by a throwing
+    // first tick carries the capacity but no stamp for it.
+    @Test func theStepFromAThrowingFirstTickCachesCapacityWithoutAStamp() throws {
+        let provider = FakeDiskProvider(
+            throughput: [DiskFixtures.referencePrevious],
+            capacities: [DiskFixtures.referenceCapacity],
+            throwThroughputOnCall: [0]
+        )
+        let step = DiskSamplingStep(
+            provider: provider,
+            previous: nil,
+            capacity: nil,
+            capacityReadAt: nil
+        )
+
+        let result = step.advanced()
+
+        #expect(try #require(result.snapshot).total == 494_354_000_000)
+        #expect(result.next.capacity == DiskFixtures.referenceCapacity)
+        #expect(result.next.capacityReadAt == nil)
+        #expect(result.next.previous == nil)
+        #expect(provider.capacityCallCount == 1)
+    }
 }
 
 // cpu-metrics — CM-1, CM-2 and CM-3.
@@ -308,6 +662,10 @@ struct MetricsSamplerLoopTests {
         state: MetricsState,
         provider: FakeCPUProvider,
         memoryProvider: FakeMemoryProvider = FakeMemoryProvider(counts: [MemoryFixtures.eightGiB]),
+        diskProvider: FakeDiskProvider = FakeDiskProvider(
+            throughput: [],
+            capacities: [DiskFixtures.referenceCapacity]
+        ),
         interval: Duration = .seconds(1),
         clock: ManualClock
     ) -> MetricsSampler {
@@ -315,6 +673,7 @@ struct MetricsSamplerLoopTests {
             state: state,
             cpuProvider: provider,
             memoryProvider: memoryProvider,
+            diskProvider: diskProvider,
             topologyProvider: FakeCoreTopologyProvider(result: TickFixtures.performanceFirstTopology),
             interval: interval,
             clock: clock
@@ -490,11 +849,16 @@ struct MetricsSamplerLoopTests {
         let state = await MetricsState()
         let provider = FakeCPUProvider(samples: climbingSamples())
         let memoryProvider = FakeMemoryProvider(counts: [MemoryFixtures.eightGiB])
+        let diskProvider = FakeDiskProvider(
+            throughput: DiskFixtures.climbing(),
+            capacities: [DiskFixtures.referenceCapacity]
+        )
         let clock = ManualClock()
         let sampler = await makeSampler(
             state: state,
             provider: provider,
             memoryProvider: memoryProvider,
+            diskProvider: diskProvider,
             interval: .seconds(1),
             clock: clock
         )
@@ -513,6 +877,16 @@ struct MetricsSamplerLoopTests {
         #expect(memoryReads.count == 2)
         #expect(memoryReads.allSatisfy { $0 == false })
         #expect(await state.memory != nil)
+
+        // disk-metrics — DM-9 "Off-main reads". Both halves of the port append
+        // to one list in call order, so its length is the two throughput reads
+        // plus the single capacity read the cadence allowed.
+        let diskReads = diskProvider.readOnMainThread
+        #expect(diskProvider.throughputCallCount == 2)
+        #expect(diskProvider.capacityCallCount == 1)
+        #expect(diskReads.count == 3)
+        #expect(diskReads.allSatisfy { $0 == false })
+        #expect(await state.disk != nil)
     }
 
     // cpu-metrics — CM-3 "No wall-clock dependency": ten published snapshots,
@@ -769,6 +1143,94 @@ struct MetricsSamplerLoopTests {
         #expect(clock.pendingDeadlines == [.milliseconds(1100)])
         #expect(provider.callCount == readsBefore)
         #expect(await state.cpuHistory.count == 1)
+
+        await sampler.stop()
+    }
+
+    // MARK: - DM-8 runtime interval change, disk half
+
+    // disk-metrics — DM-8 "Restart costs one throughput-unavailable tick": the
+    // restarted loop builds a fresh `DiskSamplingStep`, so its first iteration
+    // has no baseline and no capacity stamp. It mirrors
+    // `aRestartCostsOnePublishFreeCPUTickAndNoMemoryGap`, except that disk
+    // still publishes — the capacity, with both rates `nil`.
+    @Test func aRestartCostsOneThroughputUnavailableDiskTick() async throws {
+        let state = await MetricsState()
+        let provider = FakeCPUProvider(samples: climbingSamples())
+        let diskProvider = FakeDiskProvider(
+            throughput: DiskFixtures.climbing(),
+            capacities: [DiskFixtures.referenceCapacity]
+        )
+        let clock = ManualClock()
+        let sampler = await makeSampler(
+            state: state,
+            provider: provider,
+            diskProvider: diskProvider,
+            interval: .seconds(1),
+            clock: clock
+        )
+
+        await sampler.start()
+        await clock.awaitSleepCount(1)
+        clock.advance(by: .milliseconds(100))
+        await clock.awaitSleepCount(2)
+
+        #expect(try #require(await state.disk).readBytesPerSecond == 27_100_000)
+        #expect(diskProvider.capacityCallCount == 1)
+
+        await sampler.apply(interval: .seconds(2))
+        await clock.awaitSleepCount(3)
+
+        let afterRestart = try #require(await state.disk)
+        #expect(afterRestart.readBytesPerSecond == nil)
+        #expect(afterRestart.writeBytesPerSecond == nil)
+        #expect(afterRestart.total == 494_354_000_000)
+        #expect(diskProvider.capacityCallCount == 2)
+
+        clock.advance(by: .milliseconds(100))
+        await clock.awaitSleepCount(4)
+
+        let recovered = try #require(await state.disk)
+        #expect(recovered.readBytesPerSecond == 27_100_000)
+        #expect(recovered.writeBytesPerSecond == 2_200_000)
+        #expect(diskProvider.capacityCallCount == 2)
+
+        await sampler.stop()
+    }
+
+    // disk-metrics — DM-8 "Unchanged interval keeps the baseline": no restart,
+    // so the running loop keeps the step it already has.
+    @Test func applyingTheIntervalAlreadyInEffectKeepsTheDiskBaseline() async throws {
+        let state = await MetricsState()
+        let provider = FakeCPUProvider(samples: climbingSamples())
+        let diskProvider = FakeDiskProvider(
+            throughput: DiskFixtures.climbing(),
+            capacities: [DiskFixtures.referenceCapacity]
+        )
+        let clock = ManualClock()
+        let sampler = await makeSampler(
+            state: state,
+            provider: provider,
+            diskProvider: diskProvider,
+            interval: .seconds(1),
+            clock: clock
+        )
+
+        await sampler.start()
+        await clock.awaitSleepCount(1)
+        clock.advance(by: .milliseconds(100))
+        await clock.awaitSleepCount(2)
+
+        await sampler.apply(interval: .seconds(1))
+
+        clock.advance(by: .seconds(1))
+        await clock.awaitSleepCount(3)
+
+        let disk = try #require(await state.disk)
+        #expect(disk.readBytesPerSecond == 27_100_000)
+        #expect(disk.writeBytesPerSecond == 2_200_000)
+        #expect(diskProvider.capacityCallCount == 1)
+        #expect(clock.sleepCount == 3)
 
         await sampler.stop()
     }

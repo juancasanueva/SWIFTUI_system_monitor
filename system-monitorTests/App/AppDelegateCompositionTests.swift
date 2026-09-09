@@ -90,6 +90,50 @@ struct AppDelegateCompositionTests {
         return body(delegate)
     }
 
+    /// Launches a real graph, awaits `body` while its sampling loop keeps
+    /// running, then terminates it and closes the settings window.
+    ///
+    /// The synchronous sibling above cannot serve here: the loop is a detached
+    /// task that publishes back onto the main actor, so a case that waits for a
+    /// published reading has to suspend, and a synchronous body would hold the
+    /// very actor the publish needs.
+    @MainActor
+    private static func withRunningApp<T: Sendable>(_ body: @MainActor (AppDelegate) async -> T) async -> T {
+        let delegate = AppDelegate()
+        delegate.applicationDidFinishLaunching(
+            Notification(name: NSApplication.didFinishLaunchingNotification)
+        )
+        defer {
+            delegate.applicationWillTerminate(
+                Notification(name: NSApplication.willTerminateNotification)
+            )
+            delegate.settingsWindow?.close()
+        }
+        return await body(delegate)
+    }
+
+    /// Polls `read` on the main actor until it yields a value, or gives up at
+    /// `timeout` and returns `nil`.
+    ///
+    /// A deadline rather than a fixed sleep: the loop publishes its first disk
+    /// reading on its very first iteration, so a passing case costs
+    /// milliseconds, while a graph that never publishes fails its case instead
+    /// of hanging until the suite's time limit.
+    @MainActor
+    private static func awaitValue<T>(
+        within timeout: Duration = .seconds(5),
+        of read: @MainActor () -> T?
+    ) async -> T? {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+
+        while true {
+            if let value = read() { return value }
+            guard clock.now < deadline else { return nil }
+            try? await clock.sleep(for: .milliseconds(20))
+        }
+    }
+
     /// The menu's action items, as `StatusItemControllerMenuTests` reads them.
     @MainActor
     private static func actionItems(of menu: NSMenu) -> [NSMenuItem] {
@@ -284,5 +328,83 @@ struct AppDelegateCompositionTests {
 
         #expect(live, "the probe must have held a live controller and status item")
         #expect(await probe.isFullyReleased)
+    }
+
+    // MARK: - Disk provider (DM-14)
+
+    // disk-metrics — DM-14 "Real graph runs with disk": the composition root
+    // injects `IOKitDiskProvider(capacity: VolumeCapacityReader())`, so the
+    // detached loop publishes the boot volume's real capacity on its first
+    // iteration and real throughput rates on the next one.
+    //
+    // This is the only case that can tell the real adapter from a placeholder:
+    // every other disk suite runs on `FakeDiskProvider`, and a provider whose
+    // reads throw leaves `MetricsState.disk` at `nil` forever while all of them
+    // stay green.
+    @Test func theRealGraphPublishesRealDiskReadings() async throws {
+        let readings = await Self.withRunningApp { delegate -> (first: DiskSnapshot?, withRates: DiskSnapshot?) in
+            guard let state = delegate.state else { return (nil, nil) }
+
+            let first = await Self.awaitValue { state.disk }
+            let withRates = await Self.awaitValue { state.disk?.readBytesPerSecond == nil ? nil : state.disk }
+
+            return (first, withRates)
+        }
+
+        let first = try #require(readings.first, "the real graph must publish a disk snapshot")
+
+        #expect(first.total > 0, "the boot volume must report a capacity")
+        #expect(first.free > 0)
+        #expect(first.free <= first.total)
+        #expect(first.used == first.total - first.free)
+        #expect(first.fraction > 0 && first.fraction <= 1)
+
+        let rated = try #require(readings.withRates, "the IOKit adapter must produce throughput rates")
+
+        #expect(rated.readBytesPerSecond != nil)
+        #expect(rated.writeBytesPerSecond != nil)
+        #expect(rated.total == first.total, "the cached capacity must survive the next tick")
+    }
+
+    // disk-metrics — DM-14 "Modules untouched": the disk card is panel-only, so
+    // the widget's module set is still exactly the two it has always rendered.
+    @Test func theDiskModuleNeverEntersTheMenuBarModuleSet() {
+        #expect(MetricModule.allCases == [.cpu, .memory])
+        #expect(MetricModule.menuBarOrder == [.cpu, .memory])
+    }
+
+    // disk-metrics — DM-14 "Modules untouched", the width half (R10.11): the
+    // item is measured from the settings' module set, and publishing disk
+    // readings — the loop's own and a second, larger one — must never
+    // re-measure it.
+    @Test func publishingDiskReadingsLeavesTheStatusItemWidthUnchanged() async throws {
+        let readings = await Self.withRunningApp {
+            delegate -> (published: Bool, afterLoop: CGFloat, afterApply: CGFloat, fitting: CGFloat)? in
+            guard
+                let state = delegate.state,
+                let settings = delegate.settingsState,
+                let controller = delegate.statusItemController
+            else {
+                return nil
+            }
+
+            let published = await Self.awaitValue { state.disk } != nil
+            let afterLoop = controller.statusItemLength
+            state.apply(disk: DiskFixtures.referenceSnapshot)
+
+            return (
+                published: published,
+                afterLoop: afterLoop,
+                afterApply: controller.statusItemLength,
+                fitting: controller.contentFittingWidth(for: settings.menuBarModules)
+            )
+        }
+
+        let measured = try #require(readings, "the composition root must retain every collaborator")
+
+        #expect(measured.published, "the real graph must publish a disk snapshot")
+        #expect(measured.afterLoop > 0, "the widget measured as empty")
+        #expect(measured.afterLoop == measured.fitting, "the item must stay sized from its module set")
+        #expect(measured.afterApply == measured.afterLoop, "a disk reading must not resize the widget")
     }
 }

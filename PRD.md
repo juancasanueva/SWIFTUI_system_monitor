@@ -167,7 +167,7 @@ Kept for v2. Described in section 11.
   - Percentage = Used / Total
 - R10.3 Throughput source: IOKit. Iterate `IOServiceMatching("IOBlockStorageDriver")`, read each driver's `Statistics` dictionary, take `Bytes (Read)` and `Bytes (Write)` (`kIOBlockStorageDriverStatisticsBytesReadKey` and `kIOBlockStorageDriverStatisticsBytesWrittenKey`, declared in `IOKit/storage/IOBlockStorageDriver.h`; the same counters `iostat` reads). Counters are cumulative: the rate is the delta between two samples divided by the elapsed wall time, never a single read (same rule as R3.1). The first sample after start publishes capacity with throughput unavailable.
 - R10.4 Counter resets: if a summed delta is negative (drive ejected or mounted, counter wrapped), that tick reports throughput as unavailable and re-seeds the baseline. The next tick reports normally.
-- R10.5 Formatting: capacity uses `ByteCountFormatStyle(style: .file)` (decimal units, so a 512 GB SSD reads `494,35 GB` as in Finder). Throughput is formatted as decimal bytes per second with one fraction digit and a `/s` suffix (`27,1 MB/s`). Separators follow the system locale as in R4.4.
+- R10.5 Formatting: capacity uses `ByteCountFormatStyle(style: .decimal)` (decimal units, so a 512 GB SSD reads `494,35 GB` as in Finder). Throughput is formatted as decimal bytes per second with one fraction digit and a `/s` suffix (`27,1 MB/s`). Separators follow the system locale as in R4.4.
 - R10.6 Layout per 4.5: header, ring gauge with `Disk` sublabel, three key/value rows Used, Free, Total, and a footer row with read then write throughput. Read and write icons must differ (the reference uses the same icon for both; that is a legibility defect, not a requirement) and each carries an accessibility label of "Read" or "Write".
 - R10.7 Cadence: throughput is sampled on every tick. Capacity is refreshed at most every 10 s and the last values are reused in between; the important-usage query can cost more than a plain `statfs` and the value changes slowly.
 - R10.8 No history graph and no ring buffer for disk in v1. `MetricsState` holds only the latest `DiskSnapshot`.
@@ -235,21 +235,36 @@ struct MemorySnapshot: Sendable {
     var fraction: Double { Double(used) / Double(total) }
 }
 
-struct DiskCounters: Sendable {          // raw value returned by the DiskMetricsProvider port
+// The DiskMetricsProvider port reads the two halves separately, because
+// throughput and capacity come from different facilities on different cadences
+// (R10.7) and either may fail without affecting the other:
+//     func readThroughput() throws -> DiskThroughputCounters
+//     func readCapacity()   throws -> VolumeCapacity
+
+struct DiskThroughputCounters: Sendable {  // returned by readThroughput()
+    let bytesRead: UInt64                // cumulative, summed over all block storage drivers
+    let bytesWritten: UInt64             // cumulative, summed over the same drivers
+    let driverCount: Int                 // drivers actually read; 0 is a valid reading
+                                         // that carries no data, so no rate follows from it
+    let timestamp: ContinuousClock.Instant  // stamped by the adapter at read time, never
+                                            // by the Domain, which reads no clock
+}
+
+struct VolumeCapacity: Sendable {        // returned by readCapacity()
     let total: UInt64                    // boot volume capacity, bytes
     let free: UInt64                     // available for important usage, bytes
-    let bytesRead: UInt64                // cumulative, summed over all block storage drivers
-    let bytesWritten: UInt64             // cumulative, summed over all block storage drivers
-    let timestamp: ContinuousClock.Instant
 }
 
 struct DiskSnapshot: Sendable {
     let total: UInt64
     let free: UInt64
-    let used: UInt64                     // total − free
-    let readBytesPerSecond: Double?      // nil on the first sample and after a counter reset
-    let writeBytesPerSecond: Double?
-    var fraction: Double { Double(used) / Double(total) }
+    let used: UInt64                     // total − free, saturating at 0, so a free figure
+                                         // larger than total cannot wrap around
+    let readBytesPerSecond: Double?      // both rates are nil together: on the first sample,
+    let writeBytesPerSecond: Double?     // after a counter reset, and when driverCount is 0
+    var fraction: Double {               // 0 when total is 0, and never above 1
+        total > 0 ? min(Double(used) / Double(total), 1) : 0
+    }
 }
 ```
 
@@ -260,8 +275,8 @@ struct DiskSnapshot: Sendable {
 | CPU ticks | `host_processor_info(PROCESSOR_CPU_LOAD_INFO)` | Must `vm_deallocate` the returned buffer. Works in sandbox. |
 | P/E core counts | `sysctl hw.perflevel0.logicalcpu`, `hw.perflevel1.logicalcpu` | perflevel0 is the higher-performance level on Apple Silicon. Absent on Intel. |
 | Memory | `host_statistics64(HOST_VM_INFO64)` | Works in sandbox. |
-| Disk capacity | `URLResourceValues` `.volumeTotalCapacityKey`, `.volumeAvailableCapacityForImportantUsageKey` on `/` | Public Foundation API. The important-usage figure includes purgeable space and matches Finder's Available. |
-| Disk throughput | IOKit `IOBlockStorageDriver` → `Statistics` → `Bytes (Read)`, `Bytes (Write)` | Keys are public constants in `IOKit/storage/IOBlockStorageDriver.h`; same source as `iostat`. Cumulative per device, delta per tick. Unverified under App Sandbox (v1 is not sandboxed). |
+| Disk capacity | `URLResourceValues` `.volumeTotalCapacityKey`, `.volumeAvailableCapacityForImportantUsageKey` on `/` | Public Foundation API. The important-usage figure includes purgeable space and matches Finder's Available. Works in sandbox (`VolumeCapacityIntegrationTests`). |
+| Disk throughput | IOKit `IOBlockStorageDriver` → `Statistics` → `Bytes (Read)`, `Bytes (Write)` | Keys are public constants in `IOKit/storage/IOBlockStorageDriver.h`; same source as `iostat`. Cumulative per device, delta per tick. Works in sandbox: the app target sets `ENABLE_APP_SANDBOX = YES` (`project.pbxproj:401,435`) and the `.integration` suite `IOKitDiskIntegrationTests` proves statistics access inside the sandboxed test host. |
 
 All v1 data sources are public APIs: Mach for CPU and memory, Foundation and IOKit block storage statistics for disk.
 
@@ -356,7 +371,7 @@ The Disk card omits the history graph row; its footer is the read/write throughp
 | Wide menu bar on small displays | Widget gets hidden by macOS | Keep under 230 pt (R1.7); allow hiding modules (F6). |
 | `IOBlockStorageDriver` counters are per device and cumulative | Wrong rate after an eject or mount, or on multi-disk Macs | Sum over the drivers present on each tick, re-seed on a negative delta (R10.4), cover with a fake provider. |
 | Important-usage capacity query at 1 Hz | Sampling CPU creeps toward the 1% budget | Refresh capacity at most every 10 s (R10.7); profile in M5. |
-| Popover grows with a third card | Panel taller than short displays allow | Height still fits content (R2.2); the Disk card is the shortest since it has no graph. |
+| Popover grows with a third card | Panel taller than short displays allow | Measured in M5: 678 pt with two cards → 871 pt with three (the Disk card adds 175 pt, the shortest of the three since it has no graph). Height still fits content (R2.2) and still fits a 14" display. |
 
 Profiling note: the Instruments pass named in the third row (Time Profiler + SwiftUI template, panel closed then open) is a manual M4 task, not an automated one. Its measured CPU and RSS numbers are recorded in `openspec/changes/polish-module/apply-progress.md` alongside the rest of the M4 manual checklist.
 

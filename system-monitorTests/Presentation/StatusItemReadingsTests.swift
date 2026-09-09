@@ -59,6 +59,16 @@ struct PaletteTests {
         #expect(Palette.memFree == Self.sRGB(0x3DD68C))
     }
 
+    // disk-card — "Token value"
+    //
+    // Values only, for the same reason as the memory segments: `diskAccent` is
+    // deliberately the same colour as `memFree` — two tokens, one colour —
+    // because the disk ring and the memory bar are never adjacent.
+    @Test func theDiskAccentMatchesTheProductPalette() {
+        #expect(Palette.diskAccent == Self.sRGB(0x3DD68C))
+        #expect(Palette.diskAccent == Palette.memFree)
+    }
+
     @Test func surfaceTokensMatchTheProductPalette() {
         #expect(Palette.panelBackground == Self.sRGB(0x0F1522))
         #expect(Palette.cardBackground == Self.sRGB(0x1A2131))

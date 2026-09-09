@@ -43,6 +43,11 @@ nonisolated enum Palette {
     /// Free segment of the memory bar.
     static let memFree = sRGB(0x3DD68C)
 
+    /// Disk gauge, throughput icons, and the disk card header glyph. Shares its
+    /// value with `memFree`: two tokens, one colour, because the disk ring and
+    /// the memory bar are never adjacent.
+    static let diskAccent = sRGB(0x3DD68C)
+
     /// Builds an opaque sRGB colour from a `0xRRGGBB` literal.
     private static func sRGB(_ hex: UInt32) -> Color {
         Color(

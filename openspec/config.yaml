@@ -14,7 +14,7 @@ context: |
   Testing: Swift Testing (@Test, #expect) in system-monitorTests; XCTest/XCUITest only in system-monitorUITests.
   Concurrency: SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor, SWIFT_APPROACHABLE_CONCURRENCY = YES; providers nonisolated + Sendable.
   Style: value-type Sendable snapshots in Domain; @Observable @MainActor state in Application; container/presentational views.
-  Product source of truth: PRD.md at the repository root (v1 = CPU + RAM only; GPU deferred to v2).
+  Product source of truth: PRD.md at the repository root (Draft v3: v1 = CPU + RAM + Disk, F10/M5 added 2026-09-06; GPU deferred to v2).
 
 projects:
   - path: .
@@ -66,7 +66,7 @@ skills:
 
 rules:
   proposal:
-    - Reference the PRD feature ID (F1..F9) and milestone (M1..M4) the change serves.
+    - Reference the PRD feature ID (F1..F10) and milestone (M1..M5) the change serves.
     - Keep GPU work out of v1 scope; it belongs to PRD section 11 (v2).
     - Include a rollback plan for changes that touch the status item lifecycle or sampling loop.
   specs:

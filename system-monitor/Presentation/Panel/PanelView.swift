@@ -1,13 +1,32 @@
 import SwiftUI
 
+/// One card slot of the detail panel, top to bottom.
+///
+/// The order lives in `PanelView.cards` as a pure array, the panel analogue of
+/// `DiskCardModel.sections`: "CPU, Memory, Disk" (DC-1) is an assertion on a
+/// value rather than a rendering inspection, and the body is a switch, so the
+/// two cannot drift apart.
+nonisolated enum PanelCard: Sendable, Equatable, CaseIterable, Identifiable {
+    case cpu
+    case memory
+    case disk
+
+    var id: Self { self }
+}
+
 /// The detail panel shown in the popover.
 ///
 /// Container view: it reads `MetricsState` from the environment and hands plain
-/// values to the presentational cards, so both cards keep updating while the
-/// popover is open.
+/// values to the presentational cards, so every card keeps updating while the
+/// popover is open. The panel has no fixed height: it grows with its cards, and
+/// each card renders its full skeleton before its first reading, so the popover
+/// does not resize when a snapshot lands.
 struct PanelView: View {
 
     @Environment(MetricsState.self) private var state
+
+    /// Card order, top to bottom (DC-1).
+    nonisolated static let cards: [PanelCard] = [.cpu, .memory, .disk]
 
     private static let width: CGFloat = 320
     private static let spacing: CGFloat = 12
@@ -15,12 +34,22 @@ struct PanelView: View {
 
     var body: some View {
         VStack(spacing: Self.spacing) {
-            CPUCard(snapshot: state.cpu, history: state.cpuHistory)
-            MemoryCard(snapshot: state.memory, history: state.memoryHistory)
+            ForEach(Self.cards) { card in
+                self.card(card)
+            }
         }
         .padding(Self.padding)
         .frame(width: Self.width)
         .background(Palette.panelBackground)
+    }
+
+    @ViewBuilder
+    private func card(_ card: PanelCard) -> some View {
+        switch card {
+        case .cpu: CPUCard(snapshot: state.cpu, history: state.cpuHistory)
+        case .memory: MemoryCard(snapshot: state.memory, history: state.memoryHistory)
+        case .disk: DiskCard(snapshot: state.disk)
+        }
     }
 }
 
@@ -57,6 +86,15 @@ struct PanelView: View {
             )
         )
     }
+
+    state.apply(
+        disk: DiskSnapshot(
+            total: 494_354_000_000,
+            free: 62_286_000_000,
+            readBytesPerSecond: 27_100_000,
+            writeBytesPerSecond: 2_200_000
+        )
+    )
 
     return PanelView()
         .environment(state)

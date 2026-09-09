@@ -28,11 +28,18 @@ struct PanelViewTests {
 
     private static let memorySnapshot = MemoryFixtures.snapshot(from: MemoryFixtures.eightGiB)
 
+    private static let diskSnapshot = DiskFixtures.referenceSnapshot
+
     /// Card width inside the panel: the fixed 320 pt minus its 12 pt padding.
     private static let cardWidth: CGFloat = 296
 
-    /// Panel spacing plus its top and bottom padding.
+    /// One panel spacing plus its top and bottom padding: what the two-card
+    /// panel added to its cards.
     private static let panelChrome: CGFloat = 12 + 12 + 12
+
+    /// Two panel spacings plus its top and bottom padding, the chrome of the
+    /// three-card panel (DC-11).
+    private static let threeCardChrome: CGFloat = 12 + 12 + 12 + 12
 
     @MainActor
     private static func fittingSize(for state: MetricsState) -> CGSize {
@@ -46,6 +53,11 @@ struct PanelViewTests {
         let hostingView = NSHostingView(rootView: card.frame(width: Self.cardWidth))
         hostingView.layoutSubtreeIfNeeded()
         return hostingView.fittingSize.height
+    }
+
+    @MainActor
+    private static func diskCardHeight(_ snapshot: DiskSnapshot?) -> CGFloat {
+        cardHeight(DiskCard(snapshot: snapshot))
     }
 
     @MainActor
@@ -96,9 +108,12 @@ struct PanelViewTests {
 
     // memory-card — "Panel grows with the memory card"
     //
-    // The panel is exactly its two cards plus its own chrome: measured 678 pt
-    // = 370 (CPU) + 272 (memory) + 36. A placeholder in the memory slot is far
-    // shorter than the real card, so it cannot reach the pinned lower bound.
+    // The CPU and memory cards plus one spacing and the panel padding measured
+    // 678 pt while the panel held two cards; the disk card now sits under
+    // them, so the panel is taller than that sum (the measured three-card
+    // figure is pinned in `thePanelGrowsByTheFullDiskCard`).
+    // A placeholder in the memory slot is far shorter than the real card, so
+    // it cannot reach the pinned lower bound.
     @Test func thePanelStacksTheFullMemoryCardUnderTheCPUCard() async {
         let state = await MetricsState()
         await state.apply(cpu: Self.snapshot(total: 0.42, coreCount: 12))
@@ -141,5 +156,70 @@ struct PanelViewTests {
         #expect(before == "0.0%")
         #expect(after == "69.0%")
         #expect(history.count == 1)
+    }
+
+    // MARK: - disk-card DC-1, DC-8, DC-11
+
+    // disk-card — "Card order"
+    @Test func thePanelStacksCPUThenMemoryThenDisk() {
+        #expect(PanelView.cards == [.cpu, .memory, .disk])
+        #expect(Set(PanelView.cards) == Set(PanelCard.allCases))
+    }
+
+    // disk-card — "Card renders from a fixed input"
+    @Test func theDiskCardRendersFromItsSnapshotAlone() async {
+        let height = await Self.diskCardHeight(Self.diskSnapshot)
+
+        #expect(height > 120, "the disk card lost its gauge, rows or throughput footer")
+    }
+
+    // disk-card — "Height is stable"
+    //
+    // The disk card renders its full skeleton before the first reading, so the
+    // first snapshot fills the card instead of resizing the popover.
+    @Test func theFirstDiskSnapshotFillsTheCardWithoutResizingThePanel() async {
+        let state = await MetricsState()
+        await state.apply(cpu: Self.snapshot(total: 0.42, coreCount: 12))
+        await state.apply(memory: Self.memorySnapshot)
+        let before = await Self.fittingSize(for: state)
+
+        await state.apply(disk: Self.diskSnapshot)
+        let after = await Self.fittingSize(for: state)
+
+        #expect(after == before, "the disk card changed size when its first reading landed")
+    }
+
+    // disk-card — "Three-card height"
+    //
+    // The panel is exactly its three cards plus its own chrome: measured
+    // 871 pt = 370 (CPU) + 278 (memory) + 175 (disk) + 48, up from the 678 pt
+    // the two-card panel occupied. It still fits a 14" display.
+    @Test func thePanelGrowsByTheFullDiskCard() async {
+        let state = await MetricsState()
+        await state.apply(cpu: Self.snapshot(total: 0.42, coreCount: 12))
+        await state.apply(memory: Self.memorySnapshot)
+        await state.apply(disk: Self.diskSnapshot)
+
+        let panel = await Self.fittingSize(for: state)
+        let cards = await Self.cardHeights(for: state)
+        let disk = await Self.diskCardHeight(state.disk)
+        let twoCardHeight = cards.cpu + cards.memory + Self.panelChrome
+
+        #expect(disk > 120, "the disk card lost its gauge, rows or throughput footer")
+        #expect(panel.height >= cards.cpu + cards.memory + disk + Self.threeCardChrome)
+        #expect(panel.height > 620, "the disk slot is still a placeholder")
+        #expect(panel.height > twoCardHeight, "the panel did not grow with the third card")
+    }
+
+    // disk-card — "Live update while open"
+    @Test func theDiskGaugeTextFollowsTheAppliedSnapshot() async {
+        let state = await MetricsState()
+        let before = await DiskCardModel.gaugeText(for: state.disk, locale: Self.english)
+
+        await state.apply(disk: Self.diskSnapshot)
+        let after = await DiskCardModel.gaugeText(for: state.disk, locale: Self.english)
+
+        #expect(before == "\u{2014}", "the empty panel invented a reading")
+        #expect(after == "87.4%")
     }
 }

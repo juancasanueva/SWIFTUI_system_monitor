@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Replace the hardcoded "CPU 0%" status item with a data-driven CPU module showing a 60-sample sparkline and an integer percentage, rendered at a deterministic width that does not jitter. MEM binds to `MetricsState.memory` and `memoryHistory`: integer percent of Used/Total and a 60-sample sparkline in `memAccent`; every module in the user's ordered subset (`SettingsState.menuBarModules`, default `MetricModule.menuBarOrder`) renders a sparkline (decision 2026-09-04: 40 pt each; budget raised to 230 pt so normal spacing fits). The status item length is re-measured only when that module set changes. Right-click shows a context menu with Settings…, Launch at Login and Quit; the popover is pinned to the dark appearance. Serves PRD F5, F6, R1.2, R1.3, R1.4, R1.5, R1.6, R1.7, R4.6, R5.4, R6.2, R6.3, R6.4, 6.5, 7.2.
+Replace the hardcoded "CPU 0%" status item with a data-driven CPU module showing a 60-sample sparkline and an integer percentage, rendered at a deterministic width that does not jitter. MEM binds to `MetricsState.memory` and `memoryHistory`: integer percent of Used/Total and a 60-sample sparkline in `memAccent`; every module in the user's ordered subset (`SettingsState.menuBarModules`, default `MetricModule.menuBarOrder`) renders a sparkline (decision 2026-09-04: 40 pt each; budget raised to 230 pt so normal spacing fits; 2026-09-10: a hairline separator between modules and a rounded card behind the widget, budget raised to 250 pt). The status item length is re-measured only when that module set changes. Right-click shows a context menu with Settings…, Launch at Login and Quit; the popover is pinned to the dark appearance. Serves PRD F5, F6, R1.2, R1.3, R1.4, R1.5, R1.6, R1.7, R4.6, R5.4, R6.2, R6.3, R6.4, 6.5, 7.2.
 
 ## Requirements
 
@@ -74,7 +74,7 @@ The CPU sparkline MUST draw the last 60 values of the CPU history at a fixed 40 
 
 ### Requirement: Fixed-width, jitter-free layout (Layer: Presentation) — R1.4, R1.7, 6.5
 
-ID MBW-9. The value text MUST occupy a fixed frame sized for `"100%"`. `statusItem.length` MUST be set explicitly on initialisation from a measurement of the current module set rendered at `"100%"`, MUST be re-measured only when the module set changes, and MUST NOT change as values change. The hosting view MUST use empty `sizingOptions` so 1 Hz updates do not trigger Auto Layout constraint updates. Total width MUST be under 130 pt for one module and under 230 pt for two.
+ID MBW-9. The value text MUST occupy a fixed frame sized for `"100%"`. `statusItem.length` MUST be set explicitly on initialisation from a measurement of the current module set rendered at `"100%"`, MUST be re-measured only when the module set changes, and MUST NOT change as values change. The hosting view MUST use empty `sizingOptions` so 1 Hz updates do not trigger Auto Layout constraint updates. Total width MUST be under 130 pt for one module and under 250 pt for two. Two modules MUST be separated by a 1 pt hairline, and the whole widget MUST sit on a rounded card with 6 pt horizontal insets.
 
 #### Scenario: Length stable across updates
 
@@ -92,7 +92,13 @@ ID MBW-9. The value text MUST occupy a fixed frame sized for `"100%"`. `statusIt
 
 - GIVEN the widget rendering `"100%"` for both modules
 - WHEN its fitting width is measured
-- THEN the width is less than 230 pt
+- THEN the width is less than 250 pt
+
+#### Scenario: Module separator
+
+- GIVEN the widget rendering `"100%"` for both modules
+- WHEN its fitting width is compared with each module rendered alone
+- THEN it is exactly one 1 pt hairline and one extra module gap wider than the two modules side by side
 
 #### Scenario: One-module width
 
@@ -148,7 +154,7 @@ ID MBW-8. Every module in `menuBarOrder` MUST render a 40 pt sparkline in its ac
 - GIVEN `memoryHistory` is empty and `memory == nil`
 - WHEN the widget renders
 - THEN the MEM module shows its label, an empty 40 pt sparkline area and `"0%"`
-- AND the total content width measured at `"100%"` for both modules is under 230 pt
+- AND the total content width measured at `"100%"` for both modules is under 250 pt
 
 ### Requirement: MEM live value and sparkline (Layer: Presentation) — R1.3, R1.4, R4.2, R4.6
 

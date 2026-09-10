@@ -80,15 +80,28 @@ enum StatusItemMetrics {
     /// Spacing between the label, sparkline and value of one module.
     ///
     /// Two 40 pt sparklines, two labels and two `"100%"` value frames occupy
-    /// 195 pt on their own, so readable gaps only fit inside the 230 pt budget
-    /// (menu-bar-widget R1.7). The measured widget is 221 pt.
+    /// 195 pt on their own, so readable gaps, the hairline and the card insets
+    /// only fit inside the 250 pt budget (menu-bar-widget R1.7). The measured
+    /// widget is 236 pt.
     static let elementSpacing: CGFloat = 4
 
     /// Spacing between two modules.
     static let moduleSpacing: CGFloat = 6
 
-    /// Inset on each side of the widget.
-    static let horizontalPadding: CGFloat = 2
+    /// Inset on each side of the widget, inside the card.
+    static let horizontalPadding: CGFloat = 6
+
+    /// Inset above and below the widget, inside the card.
+    static let verticalPadding: CGFloat = 3
+
+    /// Width of the hairline drawn between two modules.
+    static let separatorWidth: CGFloat = 1
+
+    /// Height of that hairline; matches the sparkline so it reads as one row.
+    static let separatorHeight: CGFloat = 14
+
+    /// Corner radius of the card behind the widget.
+    static let cardCornerRadius: CGFloat = 6
 
     /// Font of the value text: 11 pt with monospaced digits.
     static let valueFont = Font.system(size: 11).monospacedDigit()
@@ -133,12 +146,37 @@ struct StatusItemContent: View, Equatable {
     var body: some View {
         HStack(spacing: StatusItemMetrics.moduleSpacing) {
             ForEach(readings) { reading in
+                if reading.id != readings.first?.id {
+                    ModuleSeparator()
+                }
                 ModuleLabel(reading: reading)
                     .equatable()
             }
         }
         .padding(.horizontal, StatusItemMetrics.horizontalPadding)
+        .padding(.vertical, StatusItemMetrics.verticalPadding)
+        .background(
+            .quaternary,
+            in: RoundedRectangle(
+                cornerRadius: StatusItemMetrics.cardCornerRadius,
+                style: .continuous
+            )
+        )
         .fixedSize()
+    }
+}
+
+/// Hairline between two modules, in the secondary label colour so it stays
+/// visible on dark and light menu bars without competing with the accents.
+private struct ModuleSeparator: View {
+
+    var body: some View {
+        Rectangle()
+            .fill(.secondary)
+            .frame(
+                width: StatusItemMetrics.separatorWidth,
+                height: StatusItemMetrics.separatorHeight
+            )
     }
 }
 

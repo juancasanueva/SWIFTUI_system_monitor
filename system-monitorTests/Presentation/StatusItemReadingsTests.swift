@@ -498,17 +498,43 @@ struct StatusItemMetricsTests {
 
     // menu-bar-widget — "Fixed-width, jitter-free layout"
     //
-    // The 230 pt budget exists so the widget can breathe. Pinning the spacing
+    // The 250 pt budget exists so the widget can breathe. Pinning the spacing
     // keeps a future width squeeze from collapsing the gaps instead of raising
     // the budget again.
     @Test func theLayoutKeepsItsReadableSpacing() async {
         let element = await StatusItemMetrics.elementSpacing
         let module = await StatusItemMetrics.moduleSpacing
         let padding = await StatusItemMetrics.horizontalPadding
+        let separator = await StatusItemMetrics.separatorWidth
+        let corner = await StatusItemMetrics.cardCornerRadius
 
         #expect(element == 4)
         #expect(module == 6)
-        #expect(padding == 2)
+        #expect(padding == 6)
+        #expect(separator == 1)
+        #expect(corner == 6)
+    }
+
+    // menu-bar-widget — "Module separator": the two-module widget is exactly
+    // one hairline and one extra module gap wider than its modules laid side
+    // by side, which is what proves a separator sits between them and that a
+    // single module never draws one.
+    @Test func theModulesAreSeparatedByAHairline() async {
+        let both = await StatusItemMetrics.measurementReadings(for: MetricModule.menuBarOrder)
+        let cpu = await StatusItemMetrics.measurementReadings(for: [.cpu])
+        let memory = await StatusItemMetrics.measurementReadings(for: [.memory])
+
+        let bothWidth = await Self.contentWidth(for: both)
+        let cpuWidth = await Self.contentWidth(for: cpu)
+        let memoryWidth = await Self.contentWidth(for: memory)
+        let padding = await StatusItemMetrics.horizontalPadding
+        let module = await StatusItemMetrics.moduleSpacing
+        let separator = await StatusItemMetrics.separatorWidth
+
+        let modulesOnly = cpuWidth + memoryWidth - 2 * padding
+        let expected = modulesOnly + 2 * module + separator
+
+        #expect(abs(bothWidth - expected) < 0.5)
     }
 
     // menu-bar-widget — "Fixed-width, jitter-free layout"
@@ -551,7 +577,7 @@ struct StatusItemMetricsTests {
     }
 
     // menu-bar-widget — "Width budget": both modules at full scale stay under
-    // the 230 pt budget, and one module is strictly narrower than two.
+    // the 250 pt budget, and one module is strictly narrower than two.
     @Test func twoModulesAtFullScaleStayUnderTheWidgetBudget() async {
         let both = await StatusItemMetrics.measurementReadings(for: MetricModule.menuBarOrder)
         let single = await StatusItemMetrics.measurementReadings(for: [.memory])
@@ -560,7 +586,7 @@ struct StatusItemMetricsTests {
         let singleWidth = await Self.contentWidth(for: single)
 
         #expect(bothWidth > 0, "the widget measured as empty")
-        #expect(bothWidth < 230)
+        #expect(bothWidth < 250)
         #expect(singleWidth < bothWidth)
     }
 
@@ -575,9 +601,10 @@ struct StatusItemMetricsTests {
         let width = await Self.contentWidth(for: reading)
         let sparkline = await StatusItemMetrics.sparklineWidth
         let value = await StatusItemMetrics.valueWidth
+        let insets = await 2 * StatusItemMetrics.horizontalPadding
 
-        #expect(width >= sparkline + value)
-        #expect(width < sparkline + value + 40, "the module reserved more than one label and one sparkline")
+        #expect(width >= sparkline + value + insets)
+        #expect(width < sparkline + value + insets + 40, "the module reserved more than one label and one sparkline")
     }
 
     // menu-bar-widget — "MEM live sparkline"
@@ -628,6 +655,6 @@ struct StatusItemMetricsTests {
         let fullWidth = await Self.contentWidth(for: fullScale)
 
         #expect(fullWidth > 0, "the widget measured as empty")
-        #expect(fullWidth < 230)
+        #expect(fullWidth < 250)
     }
 }

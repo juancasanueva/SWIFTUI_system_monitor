@@ -48,7 +48,7 @@ private final class StatusItemReleaseProbe {
 struct StatusItemControllerTests {
 
     /// Budget for the whole widget, in points (menu-bar-widget R1.7).
-    private static let widthBudget: CGFloat = 230
+    private static let widthBudget: CGFloat = 250
 
     /// Budget for a single module (MBW-9 "One-module width").
     private static let oneModuleBudget: CGFloat = 130

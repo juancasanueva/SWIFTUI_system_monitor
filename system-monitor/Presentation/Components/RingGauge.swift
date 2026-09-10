@@ -20,7 +20,7 @@ struct RingGauge: View, Equatable {
     private static let diameter: CGFloat = 84
     private static let lineWidth: CGFloat = 8
     private static let trackOpacity: Double = 0.18
-    private static let valueFontSize: CGFloat = 22
+    private static let valueFontSize: CGFloat = 16
     private static let subtitleFontSize: CGFloat = 11
 
     private var clampedFraction: Double {

@@ -40,7 +40,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     private let openAbout: @MainActor () -> Void
 
     private let statusItem: NSStatusItem
-    private let hostingView: PassthroughHostingView<StatusItemRootView>
+    private let hostingView: PassthroughHostingView
     private let popover = NSPopover()
 
     /// The panel's hosting controller, kept for the controller's whole life.
@@ -452,7 +452,12 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
 }
 
 /// Hosting view that is transparent to mouse events so clicks reach the status bar button.
-private final class PassthroughHostingView<Content: View>: NSHostingView<Content> {
+///
+/// Deliberately not generic: with a macOS 15 deployment target, the Swift 6.3
+/// optimizer crashes while inlining the implicit deinit of a generic
+/// `NSHostingView` subclass in Release builds. The controller only ever hosts
+/// `StatusItemRootView`, so nothing is lost by naming it.
+private final class PassthroughHostingView: NSHostingView<StatusItemRootView> {
     override func hitTest(_ point: NSPoint) -> NSView? {
         nil
     }

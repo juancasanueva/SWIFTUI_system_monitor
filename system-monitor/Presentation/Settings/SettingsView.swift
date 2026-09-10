@@ -168,6 +168,43 @@ enum SettingsFormIntent {
     static func moveDown(_ module: MetricModule, in settings: SettingsState) {
         settings.moveDown(module)
     }
+
+    /// The Updates section's toggle (AU-4).
+    ///
+    /// Named here for the same reason as the stepper: the binding's setter is
+    /// the only place the requested value can be inverted or dropped, and no
+    /// pure test can reach a closure written inline in a `Toggle`. The updater
+    /// is the port, never the concrete checker, so this is driven in tests over
+    /// an in-memory updater that cannot reach the network.
+    static func setAutomaticUpdateChecks(_ enabled: Bool, on updater: any AppUpdating) {
+        updater.automaticallyChecksForUpdates = enabled
+    }
+
+    /// The Updates section's last-check wording (AU-6).
+    ///
+    /// The composition of the updater's recorded date with the value type that
+    /// owns the words. It lives here, where a test can call it with a fixed
+    /// `now`, rather than inside the row body, where the only observable would
+    /// be that some string was rendered.
+    static func lastUpdateCheckLabel(for updater: any AppUpdating, now: Date = Date()) -> String {
+        UpdateCheckPresentation(lastCheck: updater.lastUpdateCheckDate, now: now).label
+    }
+}
+
+// MARK: - The updater seam in the environment
+
+extension EnvironmentValues {
+
+    /// The updater, owned by the composition root and read by the settings form
+    /// (AU-6).
+    ///
+    /// An environment value rather than a parameter threaded through every row,
+    /// and optional so a preview and a test host both render with it simply
+    /// absent — which means the Updates section does not appear, never an inert
+    /// section with dead controls in it. It is `any AppUpdating` and never the
+    /// concrete checker, so nothing that renders this form can construct
+    /// something that reaches the feed.
+    @Entry var appUpdater: (any AppUpdating)?
 }
 
 /// The settings form hosted by the "Settings" window (ST-5, ST-6).
@@ -184,14 +221,22 @@ struct SettingsView: View {
 
     /// Floor for the settings window's content height in points.
     ///
-    /// The two standard sections measure 244 pt, so this leaves headroom for
-    /// the save-error footer and for larger accessibility text without the
-    /// window having to resize. `SettingsWindowController` takes whichever is
-    /// taller, this floor or the form's own fitting height, because a grouped
-    /// `Form` scrolls and would otherwise accept any height the host proposes.
-    static let formHeight: CGFloat = 280
+    /// The three sections measure less than this, so it leaves headroom for the
+    /// save-error footer and for larger accessibility text without the window
+    /// having to resize. `SettingsWindowController` takes whichever is taller,
+    /// this floor or the form's own fitting height, because a grouped `Form`
+    /// scrolls and would otherwise accept any height the host proposes.
+    ///
+    /// `SettingsViewTests` pins the floor against the tallest form the app can
+    /// show — the one with the Updates section in it — so the constant cannot
+    /// quietly stop covering the form it is a floor for.
+    static let formHeight: CGFloat = 460
 
     @Environment(SettingsState.self) private var settings
+
+    /// The updater, or `nil` when the host did not inject one. Absent means the
+    /// Updates section is not rendered at all (AU-6).
+    @Environment(\.appUpdater) private var updater
 
     /// The form's locale, passed explicitly into the pure label derivation.
     /// `SettingsFormModel`'s `.current` default is for tests and previews only.
@@ -216,6 +261,12 @@ struct SettingsView: View {
             Section("Menu bar modules") {
                 ForEach(SettingsFormModel.moduleRows(for: settings.settings)) { row in
                     ModuleSettingsRow(row: row, settings: settings)
+                }
+            }
+
+            if let updater {
+                Section("Updates") {
+                    UpdatesSettingsRows(updater: updater)
                 }
             }
 
@@ -277,16 +328,87 @@ private struct ModuleSettingsRow: View {
     }
 }
 
-/// Window-level wrapper that injects the state the form reads from the
+/// The two Updates rows: the automatic-check toggle and the last-check label
+/// (AU-4, AU-6).
+///
+/// Extracted from `SettingsView.body` for the reason `ModuleSettingsRow` is, and
+/// for one more: the whole surface is deleted by deleting this type and the
+/// `if let updater` that renders it.
+///
+/// The design also sketched an update-channel picker. System Monitor has no
+/// channels — a prerelease never enters the feed at all — so the picker would be
+/// a control that changes nothing, and this form's own rule is that such rows
+/// are absent rather than present-but-inert.
+private struct UpdatesSettingsRows: View {
+
+    /// The port, never the concrete checker. `@Bindable` needs a concrete
+    /// `@Observable` type and the seam is deliberately an existential, so the
+    /// toggle's binding is written out by hand.
+    let updater: any AppUpdating
+
+    var body: some View {
+        LabeledContent {
+            Toggle(
+                "Check for updates automatically",
+                isOn: Binding(
+                    get: { updater.automaticallyChecksForUpdates },
+                    set: { SettingsFormIntent.setAutomaticUpdateChecks($0, on: updater) }
+                )
+            )
+            .labelsHidden()
+            .toggleStyle(.switch)
+            .accessibilityIdentifier("updates-automatic-toggle")
+        } label: {
+            // The subtitle names the egress plainly: a check is a network
+            // request, and the app says so wherever it offers to make one.
+            rowLabel(
+                "Check for updates automatically",
+                sub: "Contacts System Monitor's update feed in the background. Off unless you turn it on."
+            )
+        }
+
+        LabeledContent {
+            Text(SettingsFormIntent.lastUpdateCheckLabel(for: updater))
+                .foregroundStyle(.secondary)
+                .accessibilityIdentifier("updates-last-checked")
+        } label: {
+            rowLabel(
+                "Last check",
+                sub: "System Monitor reports the check it actually made, and says so when it never has."
+            )
+        }
+    }
+
+    private func rowLabel(_ title: String, sub: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+            Text(sub)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+/// Window-level wrapper that injects the dependencies the form reads from the
 /// environment. `SettingsWindowController` hosts this type, so the window never
-/// has to know how `SettingsView` receives its dependencies.
+/// has to know how `SettingsView` receives them.
 struct SettingsRootView: View {
 
     let settings: SettingsState
 
+    /// Optional and defaulted, so a preview and a test host both render the form
+    /// with the Updates section simply absent (AU-6).
+    var updater: (any AppUpdating)?
+
+    init(settings: SettingsState, updater: (any AppUpdating)? = nil) {
+        self.settings = settings
+        self.updater = updater
+    }
+
     var body: some View {
         SettingsView()
             .environment(settings)
+            .environment(\.appUpdater, updater)
     }
 }
 

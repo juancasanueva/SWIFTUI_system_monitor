@@ -24,6 +24,10 @@ private final class LaunchReleaseProbe {
 
         do {
             let delegate = AppDelegate()
+            // No suite may start the real updater (AU-7): it would reach the
+            // feed, write the developer's real preference and open the
+            // framework's own window from a test run.
+            delegate.updaterFactory = { FakeAppUpdater() }
             delegate.applicationDidFinishLaunching(
                 Notification(name: NSApplication.didFinishLaunchingNotification)
             )
@@ -70,6 +74,28 @@ private final class LaunchReleaseProbe {
 @Suite("App delegate composition root", .tags(.integration), .timeLimit(.minutes(1)))
 struct AppDelegateCompositionTests {
 
+    /// Index of each action item in the built context menu (MBW-10).
+    private enum Item {
+        static let about = 0
+        static let checkForUpdates = 1
+        static let settings = 2
+        static let launchAtLogin = 3
+        static let quit = 4
+    }
+
+    /// Builds the real delegate with the updater seam already substituted.
+    ///
+    /// **No suite may start the real updater** (AU-7). Constructing it would
+    /// reach the feed, write the developer's real automatic-check preference and
+    /// let the framework open its own window from a test run, which is exactly
+    /// what the seam exists to make impossible.
+    @MainActor
+    private static func makeDelegate() -> AppDelegate {
+        let delegate = AppDelegate()
+        delegate.updaterFactory = { FakeAppUpdater() }
+        return delegate
+    }
+
     /// Launches a real graph, runs `body`, then terminates it and closes the
     /// settings window.
     ///
@@ -78,7 +104,7 @@ struct AppDelegateCompositionTests {
     /// body (convention 2).
     @MainActor
     private static func withLaunchedApp<T>(_ body: @MainActor (AppDelegate) -> T) -> T {
-        let delegate = AppDelegate()
+        let delegate = makeDelegate()
         delegate.applicationDidFinishLaunching(
             Notification(name: NSApplication.didFinishLaunchingNotification)
         )
@@ -101,7 +127,7 @@ struct AppDelegateCompositionTests {
     /// very actor the publish needs.
     @MainActor
     private static func withRunningApp<T: Sendable>(_ body: @MainActor (AppDelegate) async -> T) async -> T {
-        let delegate = AppDelegate()
+        let delegate = makeDelegate()
         delegate.applicationDidFinishLaunching(
             Notification(name: NSApplication.didFinishLaunchingNotification)
         )
@@ -253,7 +279,7 @@ struct AppDelegateCompositionTests {
 
                 let afterCommand = window.windowNumber
                 let items = Self.actionItems(of: controller.makeContextMenu())
-                let fired = items.indices.contains(1) ? Self.fire(items[1]) : false
+                let fired = items.indices.contains(Item.settings) ? Self.fire(items[Item.settings]) : false
 
                 return (afterCommand, window.windowNumber, window.windowTitle, window.isWindowVisible, fired)
             }
@@ -278,8 +304,8 @@ struct AppDelegateCompositionTests {
                 }
 
                 let items = Self.actionItems(of: controller.makeContextMenu())
-                if items.indices.contains(1) {
-                    Self.fire(items[1])
+                if items.indices.contains(Item.settings) {
+                    Self.fire(items[Item.settings])
                 }
                 let afterMenu = window.windowNumber
 
@@ -309,7 +335,7 @@ struct AppDelegateCompositionTests {
                 }
 
                 let items = Self.actionItems(of: controller.makeContextMenu())
-                let fired = items.indices.contains(0) ? Self.fire(items[0]) : false
+                let fired = items.indices.contains(Item.about) ? Self.fire(items[Item.about]) : false
 
                 return (fired, window.isWindowVisible, window.windowTitle)
             }
@@ -326,7 +352,7 @@ struct AppDelegateCompositionTests {
     // stops the sampler it started.
     @Test func terminatingStopsTheSampler() async throws {
         let readings = await MainActor.run { () -> (beforeTerminate: Bool, afterTerminate: Bool?) in
-            let delegate = AppDelegate()
+            let delegate = Self.makeDelegate()
             delegate.applicationDidFinishLaunching(
                 Notification(name: NSApplication.didFinishLaunchingNotification)
             )
@@ -509,5 +535,66 @@ struct AppDelegateCompositionTests {
         #expect(measured.afterLoop > 0, "the widget measured as empty")
         #expect(measured.afterLoop == measured.fitting, "the item must stay sized from its module set")
         #expect(measured.afterApply == measured.afterLoop, "a network reading must not resize the widget")
+    }
+}
+
+// MARK: - The updater (AU-7)
+//
+// The composition-root half of the update slice: one updater, reaching both
+// surfaces that speak to it. Every isolated suite passes with two — a menu item
+// over one instance and a settings toggle over another would each behave
+// correctly and would disagree about the same machine.
+extension AppDelegateCompositionTests {
+
+    // app-updates — AU-7 "The updater reaches nothing but the updater": the
+    // delegate builds exactly one updater and hands that instance to the context
+    // menu and to the settings window.
+    @Test func launchingBuildsOneUpdaterSharedByTheMenuAndTheSettingsWindow() async throws {
+        let identities = await MainActor.run { () -> (built: Bool, menu: Bool, window: Bool) in
+            Self.withLaunchedApp { delegate in
+                guard
+                    let updater = delegate.updater,
+                    let controller = delegate.statusItemController,
+                    let window = delegate.settingsWindow
+                else {
+                    return (false, false, false)
+                }
+
+                return (
+                    built: true,
+                    menu: controller.injectedUpdater === updater,
+                    window: window.boundUpdater === updater
+                )
+            }
+        }
+
+        #expect(identities.built, "the composition root must retain an updater")
+        #expect(identities.menu, "the context menu must drive the delegate's updater")
+        #expect(identities.window, "the settings window must show the delegate's updater")
+    }
+
+    // app-updates — AU-5 "An explicit update check is always reachable": the
+    // menu item the delegate wires starts exactly one check on that updater.
+    @Test func theContextMenuUpdateItemStartsOneCheckOnTheDelegatesUpdater() async throws {
+        let readings = await MainActor.run { () -> (fired: Bool, checks: Int?, title: String?) in
+            Self.withLaunchedApp { delegate in
+                guard let controller = delegate.statusItemController else {
+                    return (false, nil, nil)
+                }
+
+                let items = Self.actionItems(of: controller.makeContextMenu())
+                guard items.indices.contains(Item.checkForUpdates) else {
+                    return (false, nil, nil)
+                }
+                let item = items[Item.checkForUpdates]
+                let fired = Self.fire(item)
+
+                return (fired, (delegate.updater as? FakeAppUpdater)?.checkCount, item.title)
+            }
+        }
+
+        #expect(readings.fired, "the context menu must carry a working Check for Updates item")
+        #expect(readings.title == "Check for Updates\u{2026}")
+        #expect(readings.checks == 1)
     }
 }

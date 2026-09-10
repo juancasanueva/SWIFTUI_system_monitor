@@ -3,59 +3,123 @@ import Testing
 @testable import system_monitor
 
 // menu-bar-widget — MBW-10 "Context menu"; launch-at-login — LAL-4 "Launch at
-// Login menu item".
+// Login menu item"; app-updates — AU-5 "An explicit update check is always
+// reachable".
 //
-// The menu content is a pure table: titles, check state and the action each
-// item carries are derived from the launch-at-login status alone, so the whole
-// LAL-4 matrix runs without an `NSMenu`, an `NSStatusItem` or `SMAppService`.
-// The controller's job (batch F) is only to turn these values into
-// `NSMenuItem`s and to call the service.
+// The menu content is a pure table: titles, check state, enablement and the
+// action each item carries are derived from the launch-at-login status and the
+// updater's readiness alone, so the whole matrix runs without an `NSMenu`, an
+// `NSStatusItem`, `SMAppService` or an updater. The controller's job is only to
+// turn these values into `NSMenuItem`s and to call the collaborators.
 @Suite("Context menu model", .timeLimit(.minutes(1)))
 struct ContextMenuModelTests {
 
     private static let aboutTitle = "About System Monitor"
+    private static let updatesTitle = "Check for Updates\u{2026}"
     private static let settingsTitle = "Settings\u{2026}"
     private static let launchTitle = "Launch at Login"
     private static let quitTitle = "Quit System Monitor"
 
-    /// The launch-at-login item, which is always the third one.
-    private static func launchItem(_ status: LaunchAtLoginStatus) throws -> ContextMenuItem {
-        let items = ContextMenuModel.items(launchAtLogin: status)
-        return try #require(items.dropFirst(2).first)
+    /// Index of each item in the built menu.
+    private enum Item {
+        static let about = 0
+        static let checkForUpdates = 1
+        static let settings = 2
+        static let launchAtLogin = 3
+        static let quit = 4
     }
 
-    // menu-bar-widget — "Item titles and order": exactly four items, in that
-    // order, for every status. Parameterised so no status can quietly add,
+    private static func items(
+        _ status: LaunchAtLoginStatus = .notRegistered,
+        canCheckForUpdates: Bool = true
+    ) -> [ContextMenuItem] {
+        ContextMenuModel.items(launchAtLogin: status, canCheckForUpdates: canCheckForUpdates)
+    }
+
+    /// The launch-at-login item, which is always the fourth one.
+    private static func launchItem(_ status: LaunchAtLoginStatus) throws -> ContextMenuItem {
+        try #require(items(status).dropFirst(Item.launchAtLogin).first)
+    }
+
+    // menu-bar-widget — MBW-10 "Item titles and order": exactly five items, in
+    // that order, for every status. Parameterised so no status can quietly add,
     // drop or reorder an item.
     @Test(arguments: LaunchAtLoginStatus.allCases)
-    func everyStatusYieldsTheSameFourItemsInOrder(status: LaunchAtLoginStatus) {
-        let items = ContextMenuModel.items(launchAtLogin: status)
+    func everyStatusYieldsTheSameFiveItemsInOrder(status: LaunchAtLoginStatus) {
+        let items = Self.items(status)
 
-        #expect(items.count == 4)
-        #expect(items.first?.title == Self.aboutTitle)
-        #expect(items.dropFirst().first?.title == Self.settingsTitle)
-        #expect(items.last?.title == Self.quitTitle)
-        #expect(items.map(\.action) == [.openAbout, .openSettings, items[2].action, .quit])
+        #expect(items.count == 5)
+        #expect(items[Item.about].title == Self.aboutTitle)
+        #expect(items[Item.checkForUpdates].title == Self.updatesTitle)
+        #expect(items[Item.settings].title == Self.settingsTitle)
+        #expect(items[Item.quit].title == Self.quitTitle)
+        #expect(
+            items.map(\.action)
+                == [.openAbout, .checkForUpdates, .openSettings, items[Item.launchAtLogin].action, .quit]
+        )
     }
 
-    // menu-bar-widget — "Item titles and order": the exact title list for the
-    // default status, which is what the controller renders.
+    // menu-bar-widget — MBW-10 "Item titles and order": the exact title list for
+    // the default status, which is what the controller renders.
     @Test func theDefaultStatusProducesTheDocumentedTitleList() {
-        let titles = ContextMenuModel.items(launchAtLogin: .notRegistered).map(\.title)
+        let titles = Self.items().map(\.title)
 
-        #expect(titles == [Self.aboutTitle, Self.settingsTitle, Self.launchTitle, Self.quitTitle])
+        #expect(
+            titles == [
+                Self.aboutTitle, Self.updatesTitle, Self.settingsTitle, Self.launchTitle, Self.quitTitle,
+            ]
+        )
     }
 
     // menu-bar-widget — MBW-10: the surrounding items never carry a checkmark,
     // so a check can only ever mean "the app launches at login".
     @Test(arguments: LaunchAtLoginStatus.allCases)
     func onlyTheLaunchItemCanBeChecked(status: LaunchAtLoginStatus) {
-        let items = ContextMenuModel.items(launchAtLogin: status)
+        let items = Self.items(status)
 
-        #expect(items.first?.isChecked == false)
-        #expect(items.dropFirst().first?.isChecked == false)
-        #expect(items.last?.isChecked == false)
+        for index in [Item.about, Item.checkForUpdates, Item.settings, Item.quit] {
+            #expect(items[index].isChecked == false)
+        }
     }
+
+    // MARK: - Update command enablement (AU-5)
+
+    // app-updates — AU-5 "The command is enabled exactly while a check can run".
+    // The whole domain of the input is two values, so the table is complete.
+    @Test(arguments: [true, false])
+    func theUpdateItemFollowsWhetherACheckCanRun(canCheck: Bool) {
+        let item = Self.items(canCheckForUpdates: canCheck)[Item.checkForUpdates]
+
+        #expect(item.title == Self.updatesTitle)
+        #expect(item.action == .checkForUpdates)
+        #expect(item.isEnabled == canCheck)
+    }
+
+    // app-updates — AU-5: every other item stays enabled whatever the updater
+    // reports, so a check in flight can never take the rest of the menu with it.
+    @Test(arguments: [true, false])
+    func onlyTheUpdateItemCanBeDisabled(canCheck: Bool) {
+        let items = Self.items(canCheckForUpdates: canCheck)
+
+        for index in [Item.about, Item.settings, Item.launchAtLogin, Item.quit] {
+            #expect(items[index].isEnabled, "item \(index) must never be disabled")
+        }
+    }
+
+    // app-updates — AU-5: the update item's enablement is decided by
+    // `UpdateCommandEnablement` and by nothing else — not by whether automatic
+    // checking is on, not by the launch-at-login status beside it.
+    @Test(arguments: LaunchAtLoginStatus.allCases)
+    func theUpdateItemsEnablementIsTheDomainRule(status: LaunchAtLoginStatus) {
+        for canCheck in [true, false] {
+            let item = ContextMenuModel
+                .items(launchAtLogin: status, canCheckForUpdates: canCheck)[Item.checkForUpdates]
+
+            #expect(item.isEnabled == UpdateCommandEnablement.isEnabled(canCheckForUpdates: canCheck))
+        }
+    }
+
+    // MARK: - Launch at login (LAL-4)
 
     // launch-at-login — "Enabled shows a checkmark"
     @Test func enabledIsCheckedAndTogglesOff() throws {
@@ -79,8 +143,8 @@ struct ContextMenuModelTests {
     }
 
     // launch-at-login — "Approval pending routes to Login Items": the item is
-    // annotated and its action opens System Settings instead of toggling, so
-    // the user is never left with a switch that silently does nothing.
+    // annotated and its action opens System Settings instead of toggling, so the
+    // user is never left with a switch that silently does nothing.
     @Test func approvalPendingIsAnnotatedAndRoutesToLoginItems() throws {
         let item = try Self.launchItem(.requiresApproval)
 
@@ -109,16 +173,11 @@ struct ContextMenuModelTests {
     }
 
     // menu-bar-widget — MBW-10: the items are plain values, so two builds from
-    // the same status are interchangeable and the controller can rebuild the
+    // the same inputs are interchangeable and the controller can rebuild the
     // menu on every open without churn.
-    @Test func twoBuildsFromTheSameStatusAreEqual() {
-        #expect(
-            ContextMenuModel.items(launchAtLogin: .enabled)
-                == ContextMenuModel.items(launchAtLogin: .enabled)
-        )
-        #expect(
-            ContextMenuModel.items(launchAtLogin: .enabled)
-                != ContextMenuModel.items(launchAtLogin: .notRegistered)
-        )
+    @Test func twoBuildsFromTheSameInputsAreEqual() {
+        #expect(Self.items(.enabled) == Self.items(.enabled))
+        #expect(Self.items(.enabled) != Self.items(.notRegistered))
+        #expect(Self.items(canCheckForUpdates: true) != Self.items(canCheckForUpdates: false))
     }
 }

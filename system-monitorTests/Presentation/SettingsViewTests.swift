@@ -228,3 +228,94 @@ extension SettingsViewTests {
         #expect(store.saveCount == 2)
     }
 }
+
+// MARK: - Updates section (AU-6)
+//
+// The section is the second surface `UpdateCheckPresentation` and the updater
+// port meet on. Its two controls are wired through named `SettingsFormIntent`
+// compositions for the same reason the stepper is: a binding setter that
+// inverted the value, or a label that read the wrong date, is invisible to every
+// pure test.
+extension SettingsViewTests {
+
+    @MainActor
+    private static func fittingSize(
+        for settings: SettingsState,
+        updater: (any AppUpdating)?
+    ) -> CGSize {
+        let hostingView = NSHostingView(rootView: SettingsRootView(settings: settings, updater: updater))
+        hostingView.layoutSubtreeIfNeeded()
+        return hostingView.fittingSize
+    }
+
+    // app-updates — AU-6 "The Updates section renders nothing inert": with no
+    // updater the section is absent rather than present with dead controls, so
+    // the form measures shorter than the same form with one.
+    @Test func theUpdatesSectionIsRenderedOnlyWhenAnUpdaterIsPresent() async {
+        let (withoutUpdater, _) = await Self.makeState()
+        let (withUpdater, _) = await Self.makeState()
+
+        let absent = await Self.fittingSize(for: withoutUpdater, updater: nil)
+        let present = await Self.fittingSize(for: withUpdater, updater: FakeAppUpdater())
+
+        #expect(absent.height > 0, "the form measured as empty")
+        #expect(present.height > absent.height, "the Updates section did not render")
+        #expect(present.width == absent.width, "the section must not change the form's fixed width")
+    }
+
+    // settings — ST-5 "First show presents the whole form", with the third
+    // section in it. The window takes whichever is taller, this floor or the
+    // form's own fitting height, so the floor is only honest while it actually
+    // covers the tallest form the app can show.
+    @Test func theFormHeightFloorCoversTheThreeSectionForm() async {
+        let (settings, _) = await Self.makeState()
+
+        let measured = await Self.fittingSize(for: settings, updater: FakeAppUpdater()).height
+
+        #expect(measured > 0, "the form measured as empty")
+        #expect(
+            measured <= SettingsView.formHeight,
+            "the three-section form measures \(measured) pt, above the \(SettingsView.formHeight) pt floor"
+        )
+    }
+
+    // app-updates — AU-4: the toggle commits the value it was handed, in both
+    // directions, so an inverted binding cannot hide behind the fact that both
+    // directions change something.
+    @Test func theAutomaticUpdatesToggleWritesThroughInBothDirections() async {
+        let writes = await MainActor.run { () -> (enabled: Bool, disabled: Bool, count: Int) in
+            let updater = FakeAppUpdater(automaticallyChecksForUpdates: false)
+
+            SettingsFormIntent.setAutomaticUpdateChecks(true, on: updater)
+            let enabled = updater.automaticallyChecksForUpdates
+
+            SettingsFormIntent.setAutomaticUpdateChecks(false, on: updater)
+            return (enabled, updater.automaticallyChecksForUpdates, updater.automaticWriteCount)
+        }
+
+        #expect(writes.enabled)
+        #expect(writes.disabled == false)
+        #expect(writes.count == 2)
+    }
+
+    // app-updates — AU-6 "The label follows the updater's recorded date": the row
+    // reads the updater's own date, so an app that has just checked stops saying
+    // it never has.
+    @Test func theLastCheckLabelFollowsTheUpdatersRecordedDate() async {
+        let now = Date(timeIntervalSince1970: 1_787_000_000)
+
+        let labels = await MainActor.run { () -> (before: String, after: String) in
+            let updater = FakeAppUpdater()
+
+            let before = SettingsFormIntent.lastUpdateCheckLabel(for: updater, now: now)
+            updater.recordCheck(at: now.addingTimeInterval(-3600))
+
+            return (before, SettingsFormIntent.lastUpdateCheckLabel(for: updater, now: now))
+        }
+
+        #expect(labels.before == UpdateCheckPresentation.neverChecked)
+        #expect(labels.before == "Never checked")
+        #expect(labels.after.hasPrefix("Last checked "))
+        #expect(labels.after != labels.before)
+    }
+}

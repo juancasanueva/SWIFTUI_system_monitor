@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		BCA100000000000000000001 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = BCA100000000000000000002 /* Sparkle */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		BC5F2D18304B333C007AA0E1 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -24,7 +28,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		BC5F2D08304B333B007AA0E1 /* system-monitor.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "system-monitor.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		BC5F2D08304B333B007AA0E1 /* System-Monitor.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "System-Monitor.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		BC5F2D17304B333C007AA0E1 /* system-monitorTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "system-monitorTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		BC5F2D21304B333C007AA0E1 /* system-monitorUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "system-monitorUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -52,6 +56,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				BCA100000000000000000001 /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -85,7 +90,7 @@
 		BC5F2D09304B333B007AA0E1 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				BC5F2D08304B333B007AA0E1 /* system-monitor.app */,
+				BC5F2D08304B333B007AA0E1 /* System-Monitor.app */,
 				BC5F2D17304B333C007AA0E1 /* system-monitorTests.xctest */,
 				BC5F2D21304B333C007AA0E1 /* system-monitorUITests.xctest */,
 			);
@@ -112,9 +117,10 @@
 			);
 			name = "system-monitor";
 			packageProductDependencies = (
+				BCA100000000000000000002 /* Sparkle */,
 			);
 			productName = "system-monitor";
-			productReference = BC5F2D08304B333B007AA0E1 /* system-monitor.app */;
+			productReference = BC5F2D08304B333B007AA0E1 /* System-Monitor.app */;
 			productType = "com.apple.product-type.application";
 		};
 		BC5F2D16304B333C007AA0E1 /* system-monitorTests */ = {
@@ -195,6 +201,9 @@
 			);
 			mainGroup = BC5F2CFF304B333B007AA0E1;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				BCA100000000000000000003 /* XCRemoteSwiftPackageReference "Sparkle" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = BC5F2D09304B333B007AA0E1 /* Products */;
 			projectDirPath = "";
@@ -392,19 +401,23 @@
 		BC5F2D2C304B333C007AA0E1 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ARCHS = arm64;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = Z3S5JK8E38;
-				ENABLE_APP_SANDBOX = YES;
+				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_FILE = "Resources/SystemMonitor-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "System-Monitor";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_LSUIElement = YES;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -412,7 +425,8 @@
 				MACOSX_DEPLOYMENT_TARGET = 26.5;
 				MARKETING_VERSION = 1.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.juancasanueva.system-monitor";
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_MODULE_NAME = system_monitor;
+				PRODUCT_NAME = "System-Monitor";
 				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -426,19 +440,23 @@
 		BC5F2D2D304B333C007AA0E1 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ARCHS = arm64;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = Z3S5JK8E38;
-				ENABLE_APP_SANDBOX = YES;
+				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_FILE = "Resources/SystemMonitor-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "System-Monitor";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_LSUIElement = YES;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -446,7 +464,8 @@
 				MACOSX_DEPLOYMENT_TARGET = 26.5;
 				MARKETING_VERSION = 1.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.juancasanueva.system-monitor";
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_MODULE_NAME = system_monitor;
+				PRODUCT_NAME = "System-Monitor";
 				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -474,7 +493,7 @@
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 6.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/system-monitor.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/system-monitor";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/System-Monitor.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/System-Monitor";
 			};
 			name = Debug;
 		};
@@ -495,7 +514,7 @@
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 6.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/system-monitor.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/system-monitor";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/System-Monitor.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/System-Monitor";
 			};
 			name = Release;
 		};
@@ -577,6 +596,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		BCA100000000000000000003 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = exactVersion;
+				version = 2.9.6;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		BCA100000000000000000002 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BCA100000000000000000003 /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = BC5F2D00304B333B007AA0E1 /* Project object */;
 }

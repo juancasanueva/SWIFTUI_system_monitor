@@ -149,3 +149,63 @@ struct SettingsWindowControllerTests {
         }
     }
 }
+
+// MARK: - The updater seam (AU-6)
+//
+// The window is where the updater reaches the form: it receives one and puts it
+// in the environment, so `SettingsView` never has to know how it got there and a
+// window built without one renders the same form with the section absent.
+extension SettingsWindowControllerTests {
+
+    @MainActor
+    private static func withSettingsWindow(
+        updater: (any AppUpdating)?,
+        _ body: @MainActor (SettingsWindowController) -> Void
+    ) {
+        let controller = SettingsWindowController(
+            settings: SettingsState(store: FakeSettingsStore()),
+            updater: updater
+        )
+        defer { controller.close() }
+        body(controller)
+    }
+
+    // app-updates — AU-6: the window that was given an updater shows the Updates
+    // section, and the window that was not shows the same form without it.
+    @Test func theUpdatesSectionAppearsOnlyInAWindowGivenAnUpdater() async {
+        let heights = await MainActor.run { () -> (without: CGFloat, with: CGFloat) in
+            var without: CGFloat = 0
+            var with: CGFloat = 0
+
+            Self.withSettingsWindow(updater: nil) { controller in
+                controller.show()
+                without = controller.hostedFormFittingHeight ?? 0
+            }
+            Self.withSettingsWindow(updater: FakeAppUpdater()) { controller in
+                controller.show()
+                with = controller.hostedFormFittingHeight ?? 0
+            }
+
+            return (without, with)
+        }
+
+        #expect(heights.without > 0, "the form measured as empty")
+        #expect(heights.with > heights.without, "the injected updater did not reach the form")
+    }
+
+    // settings — ST-5 "First show presents the whole form", with the Updates
+    // section in it: the window must still open at the full height of the form
+    // it hosts.
+    @Test func theWindowWithAnUpdaterStillPresentsTheWholeForm() async {
+        await Self.withSettingsWindow(updater: FakeAppUpdater()) { controller in
+            controller.show()
+
+            let content = controller.windowContentSize
+            let natural = controller.hostedFormFittingHeight ?? 0
+
+            #expect(content?.width == SettingsView.formWidth)
+            #expect((content?.height ?? 0) >= SettingsView.formHeight)
+            #expect((content?.height ?? 0) >= natural)
+        }
+    }
+}

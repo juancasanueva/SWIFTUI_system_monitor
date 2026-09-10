@@ -14,14 +14,56 @@ System Monitor keeps a compact CPU and memory widget in the menu bar, each with 
 - **Settings.** Sampling interval from 0.5 s to 5 s, which modules appear in the menu bar, and their order. The sampler drops to a 2 s idle cadence while the panel is closed.
 - **Launch at Login.** One toggle in the right-click menu, backed by the system login items service.
 - **About.** Version, credits, links and license from the right-click menu.
+- **Updates.** Signed in-app updates from the project's own feed. Automatic checking is off until you turn it on; **Check for Updates…** in the right-click menu is always there.
 
 ## Requirements
 
 - macOS 26.5 or later
-- Apple Silicon. The app runs on Intel, but the Performance and Efficiency core split is only available on Apple Silicon.
+- Apple Silicon
 - Xcode 26 with Swift 6 to build from source
 
-## Build and run
+## Install
+
+With Homebrew:
+
+```sh
+brew tap juancasanueva/system-monitor
+brew trust juancasanueva/system-monitor
+brew install --cask system-monitor
+```
+
+That installs `/Applications/System-Monitor.app`, the same notarized build the
+releases page serves. Homebrew 6 refuses to load a cask from a third-party tap
+until the tap is trusted, which is what the middle line does; it grants nothing
+beyond this tap. The unambiguous form is
+`brew install --cask juancasanueva/system-monitor/system-monitor`.
+
+**Already have `System-Monitor.app` in `/Applications`?** Homebrew refuses to
+overwrite an app it did not place (`It seems there is already an App at
+'/Applications/System-Monitor.app'`). Let it adopt the existing copy instead:
+
+```sh
+brew install --cask --adopt system-monitor
+```
+
+Adoption keeps the bundle and its data where they are and simply records it as
+brew-managed. Because the cask declares `auto_updates`, brew does not compare
+versions before adopting: the copy you have, whatever Sparkle has updated it to,
+is the one it takes over.
+
+Or download the latest `System-Monitor-<version>.zip` from
+[Releases](../../releases), unzip it, and drag `System-Monitor.app` to
+`/Applications`.
+
+The build is notarized and stapled, so the first launch is a single ordinary
+"Open" confirmation — no right-click workaround, and no network access needed to
+get past Gatekeeper. Apple Silicon and macOS 26.5 or later only.
+
+To remove a cask install, `brew uninstall --cask --zap system-monitor` also
+deletes System Monitor's preferences and caches. System Monitor creates no
+Keychain items, so nothing of its own is left behind there.
+
+## Build from source
 
 Clone the repository and open the project in Xcode:
 
@@ -39,6 +81,35 @@ From the command line:
 xcodebuild -scheme system-monitor -destination 'platform=macOS,arch=arm64' build
 xcodebuild -scheme system-monitor -destination 'platform=macOS,arch=arm64' test
 ```
+
+## Updates
+
+System Monitor updates itself with [Sparkle](https://sparkle-project.org), from an
+EdDSA-signed appcast published alongside each release. The feed URL and the
+public verification key are compiled into the app, so an update is only ever
+installed if its signature matches the key the running copy already carries.
+
+**Automatic checking is off by default.** A check is a network request, and
+System Monitor asks before making one: turn it on in **Settings → Updates**, or
+leave it off and use **right-click → Check for Updates…** whenever you want. The
+Settings section also shows when the last check actually happened, and says so
+plainly when there has never been one.
+
+Prereleases are never offered.
+
+## Releasing
+
+Pushing a `v*` tag is the only thing that publishes a release. CI builds an
+arm64, Developer ID-signed, notarized and stapled `System-Monitor-<version>.zip`
+and attaches it to a GitHub Release; every gate runs before publication, so a
+failed run publishes nothing.
+
+The same job publishes the Sparkle appcast to GitHub Pages on a stable tag; a
+prerelease tag publishes a release and no feed entry.
+
+The runbook, prerequisites, version policy and entitlements rationale live in
+[`RELEASING.md`](RELEASING.md). Third-party attributions live in
+[`THIRD-PARTY.md`](THIRD-PARTY.md).
 
 ## Architecture
 

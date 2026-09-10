@@ -186,13 +186,22 @@ ID MBW-7. The MEM module MUST show `MetricsState.memory?.fraction` as an integer
 
 ### Requirement: Context menu (Layer: Presentation) — R1.5, R6.4
 
-ID MBW-10. Right-clicking the status item MUST show a menu rebuilt on every open with exactly four action items in this order: "About System Monitor", "Settings…", "Launch at Login", "Quit System Monitor" (separators MAY appear between them). "About System Monitor" MUST call `AboutWindowController.show()` (MBW-15); "Settings…" MUST call `SettingsWindowController.show()` (ST-5); "Launch at Login" MUST behave per LAL-4; "Quit System Monitor" MUST terminate the application. Left-click MUST keep toggling the popover.
+ID MBW-10. Right-clicking the status item MUST show a menu rebuilt on every open with exactly five action items in this order: "About System Monitor", "Check for Updates…", "Settings…", "Launch at Login", "Quit System Monitor" (separators MAY appear between them). "About System Monitor" MUST call `AboutWindowController.show()` (MBW-15); "Check for Updates…" MUST start exactly one update check and MUST follow AU-5 for its enablement; "Settings…" MUST call `SettingsWindowController.show()` (ST-5); "Launch at Login" MUST behave per LAL-4; "Quit System Monitor" MUST terminate the application. Left-click MUST keep toggling the popover.
+
+Only the update item MAY ever be disabled, and only while a check genuinely cannot run; the menu MUST therefore turn AppKit's own item validation off rather than let it decide enablement for every item.
 
 #### Scenario: Item titles and order
 
-- GIVEN a controller with fake settings and launch-at-login services
+- GIVEN a controller with fake settings, launch-at-login and updater services
 - WHEN the context menu is built
-- THEN its action-item titles are `["About System Monitor", "Settings…", "Launch at Login", "Quit System Monitor"]` in that order
+- THEN its action-item titles are `["About System Monitor", "Check for Updates…", "Settings…", "Launch at Login", "Quit System Monitor"]` in that order
+
+#### Scenario: Check for Updates item starts one check
+
+- GIVEN the same controller, with an updater that can check
+- WHEN the "Check for Updates…" action fires
+- THEN exactly one update check is started
+- AND the item is disabled, and firing it does nothing, when the updater reports it cannot check (AU-5)
 
 #### Scenario: Settings item opens the window
 

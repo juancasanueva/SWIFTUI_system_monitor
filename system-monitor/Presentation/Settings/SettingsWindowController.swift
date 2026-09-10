@@ -25,11 +25,18 @@ final class SettingsWindowController {
 
     private let settings: SettingsState
 
+    /// The updater the hosted form shows, or `nil` when the host has none
+    /// (AU-6). Typed as the port and never as the concrete checker, and optional
+    /// so a window built without one renders the same form with the Updates
+    /// section absent rather than inert.
+    private let updater: (any AppUpdating)?
+
     /// The one window, or `nil` until the first `show()`.
     private var window: NSWindow?
 
-    init(settings: SettingsState) {
+    init(settings: SettingsState, updater: (any AppUpdating)? = nil) {
         self.settings = settings
+        self.updater = updater
     }
 
     /// Creates the window on first use, then brings the app forward and the
@@ -54,6 +61,24 @@ final class SettingsWindowController {
     /// identical until the user changes something.
     var boundSettings: SettingsState {
         settings
+    }
+
+    /// The updater the hosted form shows. Test-visible for the same reason as
+    /// `boundSettings`: the composition root must hand the *same* updater to
+    /// this window and to the context menu, and two instances behave identically
+    /// until one of them checks (AU-7).
+    var boundUpdater: (any AppUpdating)? {
+        updater
+    }
+
+    /// Height the hosted form measures for itself, or `nil` before the first
+    /// `show()`.
+    ///
+    /// Test-visible because "the Updates section is rendered" has no other
+    /// observable at this level: the section is inside a SwiftUI tree the window
+    /// only ever sees as a size (AU-6).
+    var hostedFormFittingHeight: CGFloat? {
+        window?.contentViewController?.view.fittingSize.height
     }
 
     /// Whether the window is on screen. `false` before the first `show()`.
@@ -117,7 +142,9 @@ final class SettingsWindowController {
         window.title = "Settings"
         window.isReleasedWhenClosed = false
 
-        let hosting = NSHostingController(rootView: SettingsRootView(settings: settings))
+        let hosting = NSHostingController(
+            rootView: SettingsRootView(settings: settings, updater: updater)
+        )
         window.contentViewController = hosting
         hosting.view.layoutSubtreeIfNeeded()
         window.setContentSize(

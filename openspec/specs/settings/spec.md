@@ -186,6 +186,15 @@ The system MUST define a `SettingsStore` port with `load() -> Settings` and `sav
 
 `SettingsView` MUST offer an interval stepper over 0.5 s–5 s in 0.5 s steps whose label shows the value with one fraction digit and the unit "s" formatted for the injected locale (convention 9), a visibility toggle per `MetricModule` listed in the current order, and controls to move a module up or down. The toggle of the only visible module MUST be disabled. All derivations (label text, step results, toggle enablement) MUST live in the pure `nonisolated` `SettingsFormModel` (`intervalLabel(for:locale:)`, `incremented(_:)`, `decremented(_:)`, `moduleRows(for:)`) that accepts an injected `Locale`; the label is the one-fraction-digit number under that locale followed by the literal `" s"`, never a unit-formatted measurement.
 
+The form MUST also carry an **Updates** section after "Menu bar modules", with exactly the two rows AU-6 specifies — the automatic-check toggle and the "Last check" label — rendered only when an updater reaches the form through the environment and absent otherwise. `SettingsView.formHeight` MUST stay a floor that clears the whole three-section form, so the window presents it entirely on first show (ST-5).
+
+#### Scenario: Updates section present only with an updater
+
+- GIVEN the settings form hosted with an updater and the same form hosted without one
+- WHEN both are measured
+- THEN the form with an updater is taller, at the same fixed width
+- AND the measured three-section form is no taller than `SettingsView.formHeight`
+
 #### Scenario: Stepper increments in half seconds
 
 - GIVEN interval 1 s
@@ -247,7 +256,7 @@ A change to `SettingsState.samplingInterval` MUST reach the running sampler thro
 - `UserDefaultsSettingsStoreTests` (Infrastructure): ST-3 with a unique `suiteName` per test and `removePersistentDomain(forName:)` cleanup (convention 14); also hosts LAL-3 "Nothing persisted".
 - `SettingsStateTests` (Application): ST-4 and ST-7 (with `ManualClock` and `SamplingCadenceController`, see CM-3); tests are not `@MainActor` and `await` main-actor members.
 - `SettingsWindowControllerTests` and `SettingsFormModelTests` (Presentation): ST-5, ST-6; locale-pinned labels compared with Unicode-aware equality.
-- `SettingsViewTests` (Presentation): the ST-6 control wiring the pure model cannot see — the stepper, the two move buttons ("Move buttons reorder the widget") and the visibility toggle, each driven through `SettingsFormIntent` over a real `SettingsState`.
+- `SettingsViewTests` (Presentation): the ST-6 control wiring the pure model cannot see — the stepper, the two move buttons ("Move buttons reorder the widget"), the visibility toggle and the Updates section's two rows, each driven through `SettingsFormIntent` over a real `SettingsState` and, for the update rows, over a `FakeAppUpdater`.
 - `AppDelegateCompositionTests` (App): the composition root's half of ST-5 "Both entry points share the window" and of ST-7 — one `SettingsState`, one `SettingsWindowController`, and the panel transition reaching the sampler. Cmd+, itself is a manual check.
 - Test file names follow the design's File Changes table (`design.md`, revision 2, including the `AppDelegateCompositionTests.swift` row added at batch G).
 - Manual: the window opens in front from the context menu and from Cmd+, on macOS 26 (activation risk from the proposal).

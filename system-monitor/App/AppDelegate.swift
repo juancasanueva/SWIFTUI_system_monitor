@@ -13,7 +13,9 @@ import AppKit
 /// sampler always agree on the user's choices (ST-4, ST-7); and exactly one
 /// `SettingsWindowController`, so the context-menu item and Cmd+, show the same
 /// window instead of one each (ST-5). The About window follows the same
-/// single-owner rule (MBW-15).
+/// single-owner rule (MBW-15), and so does the updater: the context-menu command
+/// and the settings form must observe one instance or they disagree about the
+/// same machine (AU-7).
 final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // The graph. Internal rather than private so `AppDelegateCompositionTests`
@@ -28,6 +30,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var settingsWindow: SettingsWindowController?
     private(set) var aboutWindow: AboutWindowController?
     private(set) var statusItemController: StatusItemController?
+
+    /// The one updater, held here because the context menu and the settings
+    /// window must observe the *same* instance (AU-7). Typed as the port, never
+    /// as the concrete checker.
+    private(set) var updater: (any AppUpdating)?
+
+    /// How the updater is built, substitutable before launch.
+    ///
+    /// The seam exists because `AppDelegateCompositionTests` launches this very
+    /// delegate: constructing the real checker there would start the updater,
+    /// reach the feed, write the developer's real automatic-check preference and
+    /// let the framework open its own window from a test run. Every suite
+    /// replaces this with an in-memory updater, which is what makes those
+    /// failures structurally impossible rather than merely unlikely.
+    ///
+    /// The default is the real one, so the shipped app needs no configuration
+    /// and a forgotten substitution fails a test loudly rather than silently
+    /// disabling updates in the product.
+    var updaterFactory: @MainActor () -> any AppUpdating = {
+        SparkleUpdateChecker(automaticChecks: AutomaticUpdateChecks(defaults: .standard))
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let settingsStore = UserDefaultsSettingsStore()
@@ -52,7 +75,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
 
         let cadence = SamplingCadenceController(sampler: sampler, settings: settingsState)
-        let settingsWindow = SettingsWindowController(settings: settingsState)
+        // One updater for both surfaces (AU-7). Building it applies the app's
+        // own persisted preference to the updater before starting it, so neither
+        // a bundled default nor a value the framework persisted on a previous
+        // launch can decide whether the app reaches the network (AU-4).
+        let updater = updaterFactory()
+        let settingsWindow = SettingsWindowController(settings: settingsState, updater: updater)
         let aboutWindow = AboutWindowController(
             info: AboutModel.info(bundleInfo: Bundle.main.infoDictionary ?? [:])
         )
@@ -61,11 +89,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             settings: settingsState,
             launchAtLogin: SMAppServiceLaunchAtLogin(),
             panelObserver: cadence,
+            updater: updater,
             openSettings: { [settingsWindow] in settingsWindow.show() },
             openAbout: { [aboutWindow] in aboutWindow.show() }
         )
 
         self.state = state
+        self.updater = updater
         self.settingsState = settingsState
         self.sampler = sampler
         self.cadence = cadence

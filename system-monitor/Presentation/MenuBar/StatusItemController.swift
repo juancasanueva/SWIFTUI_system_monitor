@@ -22,6 +22,15 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     /// consumer; the composition root always supplies one.
     private let panelObserver: (any PanelVisibilityObserver)?
 
+    /// Runs the explicit update check and reports whether one can run at all
+    /// (AU-5). Typed as the port and never as the concrete checker, so a test
+    /// host substitutes an in-memory updater and can never reach the feed.
+    ///
+    /// Optional because the widget works without an updater: the composition
+    /// root always supplies one, and with none the item is present but inert
+    /// rather than absent, so the menu's shape never depends on the wiring.
+    private let updater: (any AppUpdating)?
+
     /// Opens the settings window (MBW-10). Injected rather than owned so this
     /// controller and Cmd+, drive the same `SettingsWindowController` (ST-5).
     private let openSettings: @MainActor () -> Void
@@ -70,6 +79,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         settings: SettingsState,
         launchAtLogin: any LaunchAtLoginService,
         panelObserver: (any PanelVisibilityObserver)? = nil,
+        updater: (any AppUpdating)? = nil,
         openSettings: @escaping @MainActor () -> Void = {},
         openAbout: @escaping @MainActor () -> Void = {}
     ) {
@@ -77,6 +87,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         self.settings = settings
         self.launchAtLogin = launchAtLogin
         self.panelObserver = panelObserver
+        self.updater = updater
         self.openSettings = openSettings
         self.openAbout = openAbout
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -267,6 +278,14 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         panelObserver
     }
 
+    /// The updater the menu drives, if one was injected. Test-visible for the
+    /// same reason: a composition root that builds a second updater leaves the
+    /// menu item and the settings toggle each behaving correctly over a
+    /// different instance, which no isolated suite can see (AU-7).
+    var injectedUpdater: (any AppUpdating)? {
+        updater
+    }
+
     /// Appearance pinned on the popover, or `nil` when it follows the system
     /// (MBW-11).
     var popoverAppearanceName: NSAppearance.Name? {
@@ -333,13 +352,24 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
 
     /// Builds the menu from the pure `ContextMenuModel` (MBW-10).
     ///
-    /// The registration status is read here, once per build, and never cached:
-    /// the user can change it in System Settings at any time, so a menu opened
-    /// later must show what is true then (LAL-4 "Status is re-read on every
-    /// build").
+    /// Both live inputs are read here, once per build, and never cached: the
+    /// user can change the login-item registration in System Settings at any
+    /// time (LAL-4 "Status is re-read on every build"), and a check that started
+    /// or finished while the menu was closed must be reflected the next time it
+    /// opens (AU-5).
+    ///
+    /// `autoenablesItems` is turned off because it is on by default and would
+    /// hand enablement to AppKit's own validation, silently overriding the one
+    /// Domain rule that owns the update item's answer — and dimming every other
+    /// item whose target does not implement `validateMenuItem(_:)`.
     func makeContextMenu() -> NSMenu {
         let menu = NSMenu()
-        for item in ContextMenuModel.items(launchAtLogin: launchAtLogin.status) {
+        menu.autoenablesItems = false
+        let items = ContextMenuModel.items(
+            launchAtLogin: launchAtLogin.status,
+            canCheckForUpdates: updater?.canCheckForUpdates ?? false
+        )
+        for item in items {
             menu.addItem(menuItem(for: item))
         }
         return menu
@@ -352,6 +382,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
             keyEquivalent: Self.keyEquivalent(for: item.action)
         )
         menuItem.state = item.isChecked ? .on : .off
+        menuItem.isEnabled = item.isEnabled
         // Quit is the application's own action; everything else is ours.
         menuItem.target = item.action == .quit ? NSApp : self
         return menuItem
@@ -360,6 +391,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     private static func selector(for action: ContextMenuItem.Action) -> Selector {
         switch action {
         case .openAbout: #selector(handleOpenAbout)
+        case .checkForUpdates: #selector(handleCheckForUpdates)
         case .openSettings: #selector(handleOpenSettings)
         case .toggleLaunchAtLogin: #selector(toggleLaunchAtLogin)
         case .openLoginItems: #selector(openLoginItems)
@@ -374,12 +406,21 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         switch action {
         case .openSettings: ","
         case .quit: "q"
-        case .openAbout, .toggleLaunchAtLogin, .openLoginItems: ""
+        case .openAbout, .checkForUpdates, .toggleLaunchAtLogin, .openLoginItems: ""
         }
     }
 
     @objc private func handleOpenSettings() {
         openSettings()
+    }
+
+    /// Starts exactly one check (AU-5).
+    ///
+    /// A no-op with no updater rather than a missing target: the item still
+    /// carries working wiring, so a menu built without an updater behaves like a
+    /// dimmed item the user cannot choose instead of one that reaches nothing.
+    @objc private func handleCheckForUpdates() {
+        updater?.checkForUpdates()
     }
 
     @objc private func handleOpenAbout() {

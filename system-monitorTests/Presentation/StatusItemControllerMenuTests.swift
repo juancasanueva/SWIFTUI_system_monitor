@@ -32,12 +32,13 @@ private final class OpenSettingsCounter {
 struct StatusItemControllerMenuTests {
 
     /// Index of each action item in the built menu, matching
-    /// `ContextMenuModel.items(launchAtLogin:)`.
+    /// `ContextMenuModel.items(launchAtLogin:canCheckForUpdates:)`.
     private enum Item {
         static let about = 0
-        static let settings = 1
-        static let launchAtLogin = 2
-        static let quit = 3
+        static let checkForUpdates = 1
+        static let settings = 2
+        static let launchAtLogin = 3
+        static let quit = 4
     }
 
     /// Builds a controller over fakes, runs `body`, then drops it.
@@ -45,10 +46,15 @@ struct StatusItemControllerMenuTests {
     /// Generic in the result so a case can carry AppKit readings back out as
     /// plain `Sendable` values instead of leaking a main-actor object into the
     /// non-isolated test body (convention 2).
+    ///
+    /// The updater defaults to `nil`, which is the shape every pre-update case
+    /// runs under: no updater means the check item is inert and disabled, and
+    /// nothing here can reach the network.
     @MainActor
     private static func withController<T>(
         launchAtLogin: FakeLaunchAtLoginService = FakeLaunchAtLoginService(),
         modules: [MetricModule] = MetricModule.menuBarOrder,
+        updater: (any AppUpdating)? = nil,
         openSettings: @escaping @MainActor () -> Void = {},
         openAbout: @escaping @MainActor () -> Void = {},
         _ body: @MainActor (StatusItemController) -> T
@@ -60,6 +66,7 @@ struct StatusItemControllerMenuTests {
             state: MetricsState(),
             settings: settings,
             launchAtLogin: launchAtLogin,
+            updater: updater,
             openSettings: openSettings,
             openAbout: openAbout
         )
@@ -89,14 +96,23 @@ struct StatusItemControllerMenuTests {
     // MARK: - Menu shape (MBW-10)
 
     // menu-bar-widget — MBW-10 "Item titles and order"
-    @Test func theContextMenuHasTheFourActionItemsInOrder() async {
+    @Test func theContextMenuHasTheFiveActionItemsInOrder() async {
         let titles = await Self.withController(
-            launchAtLogin: FakeLaunchAtLoginService(status: .notRegistered)
+            launchAtLogin: FakeLaunchAtLoginService(status: .notRegistered),
+            updater: FakeAppUpdater()
         ) { controller in
             Self.actionItems(of: controller.makeContextMenu()).map(\.title)
         }
 
-        #expect(titles == ["About System Monitor", "Settings\u{2026}", "Launch at Login", "Quit System Monitor"])
+        #expect(
+            titles == [
+                "About System Monitor",
+                "Check for Updates\u{2026}",
+                "Settings\u{2026}",
+                "Launch at Login",
+                "Quit System Monitor",
+            ]
+        )
     }
 
     // menu-bar-widget — MBW-15 "About item opens the window", closure half.
@@ -279,5 +295,93 @@ struct StatusItemControllerMenuTests {
         #expect(observed.errorCount == 1)
         #expect(observed.isCheckedAfter == false)
         #expect(service.enableCalls == 1)
+    }
+}
+
+// MARK: - Check for Updates (AU-5)
+//
+// `ContextMenuModelTests` pins the pure enablement table. This extension owns
+// what the controller adds on top of it: that the value becomes a real
+// `NSMenuItem` whose enabled state AppKit actually honours, that firing it
+// starts exactly one check, and that the readiness is re-read on every build
+// rather than frozen at construction.
+extension StatusItemControllerMenuTests {
+
+    // app-updates — AU-5 "Invoking the command starts exactly one check".
+    @Test func theUpdateItemStartsExactlyOneCheck() async {
+        let checks = await MainActor.run { () -> Int in
+            let updater = FakeAppUpdater(canCheckForUpdates: true)
+
+            Self.withController(updater: updater) { controller in
+                let items = Self.actionItems(of: controller.makeContextMenu())
+                #expect(Self.fire(items[Item.checkForUpdates]))
+            }
+
+            return updater.checkCount
+        }
+
+        #expect(checks == 1)
+    }
+
+    // app-updates — AU-5 "The command is disabled only while a check is in
+    // flight". The menu must not auto-enable its items, or AppKit would decide
+    // enablement from the target's `validateMenuItem` and quietly override the
+    // rule the Domain owns.
+    @Test func theUpdateItemIsDisabledWhileTheUpdaterCannotCheck() async {
+        let states = await Self.withController(
+            updater: FakeAppUpdater(canCheckForUpdates: false)
+        ) { controller in
+            let menu = controller.makeContextMenu()
+            let items = Self.actionItems(of: menu)
+            return (
+                autoenables: menu.autoenablesItems,
+                update: items[Item.checkForUpdates].isEnabled,
+                settings: items[Item.settings].isEnabled,
+                quit: items[Item.quit].isEnabled
+            )
+        }
+
+        #expect(states.autoenables == false, "AppKit would override the Domain's enablement rule")
+        #expect(states.update == false)
+        #expect(states.settings, "a check in flight must not take the rest of the menu with it")
+        #expect(states.quit)
+    }
+
+    // app-updates — AU-5: the readiness is read live on every build, exactly as
+    // the launch-at-login status is. A check that finishes while the menu is
+    // closed must leave the item live the next time it opens.
+    @Test func theUpdateItemsEnablementIsReReadOnEveryBuild() async {
+        let enabledStates = await MainActor.run { () -> [Bool] in
+            let updater = FakeAppUpdater(canCheckForUpdates: false)
+
+            return Self.withController(updater: updater) { controller in
+                let before = Self.actionItems(of: controller.makeContextMenu())
+                let wasEnabledBefore = before[Item.checkForUpdates].isEnabled
+
+                updater.canCheckForUpdates = true
+
+                let after = Self.actionItems(of: controller.makeContextMenu())
+                return [wasEnabledBefore, after[Item.checkForUpdates].isEnabled]
+            }
+        }
+
+        #expect(enabledStates == [false, true], "the menu cached the readiness instead of re-reading it")
+    }
+
+    // app-updates — AU-5: with no updater injected the item is present but
+    // inert, which is what keeps a test host — and any surface built without an
+    // updater — structurally unable to reach the feed.
+    @Test func withoutAnUpdaterTheItemIsPresentAndDisabled() async {
+        let observed = await Self.withController { controller in
+            let items = Self.actionItems(of: controller.makeContextMenu())
+            let item = items[Item.checkForUpdates]
+            let fired = Self.fire(item)
+            return (title: item.title, isEnabled: item.isEnabled, fired: fired, count: items.count)
+        }
+
+        #expect(observed.count == 5)
+        #expect(observed.title == "Check for Updates\u{2026}")
+        #expect(observed.isEnabled == false)
+        #expect(observed.fired, "the item must still carry a target, so a nil updater is a no-op not a crash")
     }
 }

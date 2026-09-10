@@ -2,8 +2,8 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft v3 (Disk card added to v1 on 2026-09-06; GPU deferred to v2 release) |
-| Date | 2026-09-06 |
+| Status | Draft v4 (Network card added on 2026-09-10 as F11 / M6; GPU moved to M7) |
+| Date | 2026-09-10 |
 | Platform | macOS 26.5+ (Xcode project deployment target), Apple Silicon first |
 | Stack | Swift 6, SwiftUI, AppKit (NSStatusItem / NSPopover), Mach APIs for metrics |
 | Reference images | `docs/reference/` (see section 4) |
@@ -12,11 +12,11 @@
 
 ## 1. Summary
 
-A lightweight, always-visible system monitor that lives in the macOS menu bar. It shows a compact widget with a live sparkline and current value for **CPU** and **RAM**. Clicking the widget opens a detail panel with a ring gauge, a breakdown of the metric, a longer history graph and, for CPU, per-core bars split into Performance and Efficiency cores. A third card shows how full the boot volume is and the live read and write throughput of the disk.
+A lightweight, always-visible system monitor that lives in the macOS menu bar. It shows a compact widget with a live sparkline and current value for **CPU** and **RAM**. Clicking the widget opens a detail panel with a ring gauge, a breakdown of the metric, a longer history graph and, for CPU, per-core bars split into Performance and Efficiency cores. A third card shows how full the boot volume is and the live read and write throughput of the disk. A fourth card shows the live download and upload rates, the bytes received and sent since boot, and a dual-line history graph of both rates.
 
 The goal is a native, low-overhead replacement for tools like iStat Menus or Stats, focused only on the metrics that matter day to day, with a modern dark UI.
 
-**v1 scope is CPU, RAM and Disk.** The Disk card was added on 2026-09-06 after M4 shipped (section 5.7, milestone M5). GPU is designed and specified in section 11 and ships in v2. The architecture is built so that adding it is additive: one provider adapter, one card, one widget module.
+**v1 shipped CPU, RAM and Disk (M5); M6 adds the Network card.** The Disk card was added on 2026-09-06 after M4 shipped (section 5.7, milestone M5) and the Network card on 2026-09-10 (section 5.8, milestone M6). GPU is designed and specified in section 11 and ships in v2 as M7. The architecture is built so that adding it is additive: one provider adapter, one card, one widget module.
 
 ---
 
@@ -32,14 +32,15 @@ The goal is a native, low-overhead replacement for tools like iStat Menus or Sta
 
 **Anti-goals (explicitly out of scope for v1).**
 - GPU (deferred to v2, see section 11).
-- Network, battery, sensors, fans, temperatures.
+- Network beyond the single card: per-interface breakdown, per-process traffic, latency, Wi-Fi signal, VPN accounting, a NET menu bar module (F9, open question 3).
+- Battery, sensors, fans, temperatures.
 - Disk beyond the single card: per-volume breakdown, external drives as separate cards, per-process I/O, SMART health, a disk menu bar module (open question 3).
 - Process list or per-process usage.
 - Notifications or alerts on thresholds.
 - Intel Macs as a first-class target (must not crash, but P/E split will be absent).
 - Mac App Store distribution (not needed for v1; revisit with GPU since IOKit access under sandbox is unverified).
 
-**Success metric.** The app runs for a full working day with under 1% average CPU and under 50 MB RSS, and the menu bar values match Activity Monitor within a reasonable margin (CPU ±3 pts, memory within 100 MB). Disk Total and Free match Finder's figures for the boot volume within 100 MB.
+**Success metric.** The app runs for a full working day with under 1% average CPU and under 50 MB RSS, and the menu bar values match Activity Monitor within a reasonable margin (CPU ±3 pts, memory within 100 MB). Disk Total and Free match Finder's figures for the boot volume within 100 MB. Network Total In and Total Out match Activity Monitor's Data received and Data sent within the same order of magnitude.
 
 ---
 
@@ -48,7 +49,7 @@ The goal is a native, low-overhead replacement for tools like iStat Menus or Sta
 | ID | Feature | Priority |
 |---|---|---|
 | F1 | Menu bar widget: CPU and MEM, each with sparkline + percentage | P0 |
-| F2 | Detail panel opened on click, three stacked cards (CPU, Memory, Disk) | P0 |
+| F2 | Detail panel opened on click, four stacked cards (CPU, Memory, Disk, Network) | P0 |
 | F3 | CPU card: ring gauge, User/System/P-Cores/E-Cores values, history graph, per-core bars | P0 |
 | F4 | Memory card: ring gauge, Used/Total/Wired/Compressed values, stacked legend, history graph | P0 |
 | F5 | Launch at login toggle | P1 |
@@ -57,6 +58,7 @@ The goal is a native, low-overhead replacement for tools like iStat Menus or Sta
 | F8 | GPU module: widget slot + GPU card (section 11) | v2 |
 | F9 | Network module (as in the original reference bar) | Future |
 | F10 | Disk card: ring gauge, Used/Free/Total values, read and write throughput (section 5.7) | P0 |
+| F11 | Network card: download and upload rates, Total In / Total Out since boot, dual-line history graph (section 5.8) | P0 (M6) |
 
 ---
 
@@ -101,6 +103,14 @@ Kept for v2. Described in section 11.
 - No history graph and no stacked bar. This is the only card without a graph.
 - `494,35 GB` is the decimal capacity Finder reports for a 512 GB Apple SSD, so capacity uses decimal units (1 GB = 10⁹ bytes), unlike the Memory card. Locale-aware decimal separator as in 4.3.
 
+### 4.6 `06-panel-network.png` — Network card
+- Header: globe icon + "Network".
+- Left: two badge rows, a downward arrow with `5 KB/s` and an upward arrow with `78 KB/s`. These are rates, not totals, so there is no ring gauge; the card replaces the gauge with the rate pair.
+- Right: `Total In 3,85 GB` and `Total Out 2,76 GB`, the bytes received and sent since boot.
+- Bottom: history area graph with **two** lines on one shared vertical scale — upload in blue above download in green.
+- Download is green and upload is blue throughout the card, matching the two arrows and the two graph lines (7.1).
+- The mockup writes the rates as `5 KB/s`; the app renders `5,0 kB/s`, because throughput reuses the decimal bytes-per-second vocabulary already fixed by R10.5 (one fraction digit, decimal units, locale-aware separator as in 4.3).
+
 ---
 
 ## 5. Functional Requirements
@@ -116,9 +126,10 @@ Kept for v2. Described in section 11.
 
 ### 5.2 Detail panel (F2)
 - R2.1 Presented as an `NSPopover` anchored to the status item, transient behavior (closes on outside click or Esc).
-- R2.2 Fixed width around 320 pt. Height fits content; the cards stack vertically with 12 pt gaps, in the order CPU, Memory, Disk.
+- R2.2 Fixed width around 320 pt. Height fits content; the cards stack vertically with 12 pt gaps, in the order CPU, Memory, Disk, Network.
 - R2.3 Dark card background (see 7.1), 12 pt corner radius, no visible borders.
 - R2.4 The panel keeps updating live while open, at the same sampling interval.
+- R2.5 When the panel's fitting height exceeds the presenting screen's visible frame height minus 24 pt, the panel is pinned to that height and its cards scroll; otherwise it keeps its fitting height and never scrolls.
 
 ### 5.3 CPU card (F3)
 - R3.1 Total usage = 100 − idle, computed from the delta of Mach tick counters between two samples, never from a single instantaneous read.
@@ -147,8 +158,8 @@ Kept for v2. Described in section 11.
 - R4.6 History graph shows the last 120 samples of the Used percentage.
 
 ### 5.5 Sampling and history
-- R5.1 A single `MetricsSampler` drives every provider (CPU, memory, disk) on one timer. Default interval 1 s, configurable 0.5–5 s.
-- R5.2 History is a fixed-capacity ring buffer per metric (capacity 120). No unbounded arrays. Disk keeps no history in v1 (R10.8).
+- R5.1 A single `MetricsSampler` drives every provider (CPU, memory, disk, network) on one timer. Default interval 1 s, configurable 0.5–5 s.
+- R5.2 History is a fixed-capacity ring buffer per metric (capacity 120). No unbounded arrays. Disk keeps no history (R10.8); Network keeps two, one for download and one for upload bytes per second, appended together only when both rates are available (R11.7).
 - R5.3 Sampling runs off the main thread. Only the published snapshot crosses to the main actor.
 - R5.4 When the panel is closed, the widget still samples at the configured rate (it needs the sparkline). A P1 optimization may lower the rate to 2 s while the panel is closed.
 
@@ -175,6 +186,19 @@ Kept for v2. Described in section 11.
 - R10.10 Gauge and icons use `diskAccent` (7.1). The amber-to-green gradient seen in the reference is P2 polish, not a v1 requirement.
 - R10.11 Disk has no menu bar module in v1 (open question 3). `MetricModule` and the settings module list are unchanged.
 
+### 5.8 Network card (F11)
+- R11.1 Scope: one machine-wide reading, the sum over the admitted interfaces. Source: the interface MIB (`net/if_mib.h`) — the row count from `{CTL_NET, PF_LINK, NETLINK_GENERIC, IFMIB_SYSTEM, IFMIB_IFCOUNT}`, then one `{CTL_NET, PF_LINK, NETLINK_GENERIC, IFMIB_IFDATA, index, IFDATA_GENERAL}` read per index into a `struct ifmibdata`, taking `ifi_ibytes` and `ifi_obytes` from its `ifmd_data`. No entitlement is required; these are the counters `netstat -ib` reports. The routing-socket MIB `NET_RT_IFLIST2` is **not** used: it declares the same fields as 64-bit but this platform's driver fills only the low 32 bits, so they wrap every 4 GB (corrected 2026-09-10, see 6.3).
+- R11.2 Interface filter: a record is admitted when its type is `IFT_ETHER` or `IFT_CELLULAR` and it does not carry `IFF_LOOPBACK`. Being up is not required, so an interface that carried traffic and then went down still contributes its bytes. The filter excludes `lo0`, `utun` tunnels, bridges, `gif` and `stf`.
+- R11.3 Total In and Total Out are the since-boot byte totals of the admitted interfaces, reported absolutely rather than accumulated by the app. Caveat: an interface destroyed and recreated by the system resets its own kernel counter, so the totals can dip below a previously shown figure; they track the kernel, not a private ledger.
+- R11.4 Rates are the byte delta divided by the elapsed time between two consecutive readings, never a single instantaneous read (the rule of R3.1 and R10.3). If a delta is negative — an interface disappeared or a counter wrapped — that tick reports no rates and re-seeds the baseline, exactly as R10.4 does for disk. The next tick reports normally. A reading covering no interface (R11.2) is likewise never one end of a window, as baseline or as current: it carries zero totals, so measuring from it would report the whole since-boot total as one window of traffic, and the first populated tick after such a reading costs one rate-free tick instead.
+- R11.5 The first tick after a start publishes the totals with the rates unavailable, because a rate needs two readings. A restart of the loop costs one tick of rates and no totals.
+- R11.6 A failed counter read publishes nothing for network — the previous reading stays on screen — and drops the baseline, so the tick after the failure is a first tick again (R11.5). Every other metric keeps sampling.
+- R11.7 History is two fixed-capacity ring buffers of 120 samples, download bytes per second and upload bytes per second. They are appended together and only when both rates are available, so the two series always carry the same sample count and the same time base.
+- R11.8 The history graph draws both series against one shared vertical scale, `max(maxDownload, maxUpload, 10 kB/s)`, so the two lines stay comparable and an idle card does not magnify noise. Both series are stroked lines with no fill, unlike the single filled area of the CPU and Memory cards.
+- R11.9 Formatting reuses the vocabulary already fixed for disk: decimal units for the totals (`ByteCountFormatStyle(style: .decimal)`, R10.5), decimal bytes per second with one fraction digit and a `/s` suffix for the rates, rendered by the same 12 pt `ThroughputLabel` the Disk card's footer uses. Separators follow the system locale as in R4.4.
+- R11.10 Unavailable states, mirroring R10.9: when no rates are available the card shows an em dash for each rate with an accessibility label of "unavailable" rather than a misleading `0 B/s`, while the totals keep rendering. Before the first reading the card shows a skeleton at its populated height, so the panel does not resize on the first tick.
+- R11.11 Palette: download green, upload blue, and a distinct `networkAccent` for the header (7.1). Network has no menu bar module in v1 (F9, open question 3): `MetricModule`, the settings module list and the status item width are unchanged.
+
 ---
 
 ## 6. Technical Design
@@ -185,8 +209,9 @@ Kept for v2. Described in section 11.
 system-monitor/
 ├── App/                      # @main, AppDelegate, status item setup, DI composition root
 ├── Domain/
-│   ├── Models/               # CPUSnapshot, MemorySnapshot, DiskSnapshot, MetricHistory
-│   └── Ports/                # CPUMetricsProvider, MemoryMetricsProvider, DiskMetricsProvider (protocols)
+│   ├── Models/               # CPUSnapshot, MemorySnapshot, DiskSnapshot, NetworkSnapshot, MetricHistory
+│   ├── Ports/                # CPUMetricsProvider, MemoryMetricsProvider, DiskMetricsProvider, NetworkMetricsProvider (protocols)
+│   └── Services/             # CPUUsageCalculator, MemoryUsageCalculator, DiskThroughputCalculator, NetworkThroughputCalculator (M6)
 ├── Application/
 │   ├── MetricsSampler.swift  # timer loop, calls ports, publishes MetricsState
 │   ├── MetricsState.swift    # @Observable, main-actor, holds snapshots + histories
@@ -195,18 +220,18 @@ system-monitor/
 ├── Infrastructure/
 │   ├── Mach/                 # MachCPUProvider (host_processor_info), MachMemoryProvider (host_statistics64)
 │   ├── IOKit/                # IOKitDiskProvider (IOBlockStorageDriver statistics + VolumeCapacityReader) (M5)
-│   └── System/               # SysctlReader (perflevel core counts), VolumeCapacityReader (URLResourceValues, M5), UserDefaultsSettingsStore, SMAppServiceLaunchAtLogin
+│   └── System/               # SysctlReader (perflevel core counts), VolumeCapacityReader (URLResourceValues, M5), SysctlNetworkProvider (interface MIB, M6), UserDefaultsSettingsStore, SMAppServiceLaunchAtLogin
 └── Presentation/
     ├── MenuBar/              # StatusItemView, ModuleLabel, Sparkline, ContextMenuModel
-    ├── Panel/                # PanelView, CPUCard, MemoryCard, DiskCard (M5)
+    ├── Panel/                # PanelView, CPUCard, MemoryCard, DiskCard (M5), NetworkCard, PanelLayout (M6)
     ├── Settings/             # SettingsView, SettingsWindowController (M4)
-    └── Components/           # RingGauge, HistoryGraph, CoreBar, StackedBar, KeyValueRow, ThroughputLabel (M5)
+    └── Components/           # RingGauge, HistoryGraph (multi-series since M6), CoreBar, StackedBar, KeyValueRow, ThroughputLabel (M5)
 ```
 
 - **Domain** has no imports beyond Foundation. Snapshots are plain `Sendable` structs.
 - **Ports** are protocols. Each has one real adapter in Infrastructure and one fake in the test target.
 - **Application** holds the only timer and every `@Observable` state object. Since M4 there are two: `MetricsState` (samples and histories, written by the sampler) and `SettingsState` (the user's `Settings`, loaded once through the `SettingsStore` port and persisted on every accepted mutation). Views never touch Mach, IOKit or `UserDefaults`.
-- **Presentation** follows container/presentational: cards receive a snapshot and a history, nothing else. The Disk card receives only a snapshot (R10.8).
+- **Presentation** follows container/presentational: cards receive a snapshot and a history, nothing else. The Disk card receives only a snapshot (R10.8); the Network card receives a snapshot and two histories (R11.7).
 - v2 adds `Infrastructure/Metal`, a second reader in `Infrastructure/IOKit` (created for Disk in M5), a `GPUMetricsProvider` port and a `GPUCard`. No existing file should need more than a one-line change (registering the new module).
 
 ### 6.2 Key domain models
@@ -266,6 +291,26 @@ struct DiskSnapshot: Sendable {
         total > 0 ? min(Double(used) / Double(total), 1) : 0
     }
 }
+
+// The NetworkMetricsProvider port reads both directions in one call, because
+// they come from the same sysctl walk and splitting them would read the
+// interface list twice per tick (R11.1):
+//     func readCounters() throws -> NetworkThroughputCounters
+
+struct NetworkThroughputCounters: Sendable {  // returned by readCounters()
+    let bytesIn: UInt64                  // cumulative, summed over the admitted interfaces
+    let bytesOut: UInt64                 // cumulative, summed over the same interfaces
+    let interfaceCount: Int              // interfaces that passed the filter; 0 is a valid
+                                         // reading that carries no data (R11.2)
+    let timestamp: ContinuousClock.Instant  // stamped by the adapter at read time, as for disk
+}
+
+struct NetworkSnapshot: Sendable {
+    let totalIn: UInt64                  // bytes received since boot (R11.3)
+    let totalOut: UInt64                 // bytes sent since boot
+    let downloadBytesPerSecond: Double?  // both rates are nil together: on the first tick,
+    let uploadBytesPerSecond: Double?    // after a negative delta, and after a failed read
+}
 ```
 
 ### 6.3 Data sources and known constraints
@@ -277,8 +322,9 @@ struct DiskSnapshot: Sendable {
 | Memory | `host_statistics64(HOST_VM_INFO64)` | Works in sandbox. |
 | Disk capacity | `URLResourceValues` `.volumeTotalCapacityKey`, `.volumeAvailableCapacityForImportantUsageKey` on `/` | Public Foundation API. The important-usage figure includes purgeable space and matches Finder's Available. Works in sandbox (`VolumeCapacityIntegrationTests`). |
 | Disk throughput | IOKit `IOBlockStorageDriver` → `Statistics` → `Bytes (Read)`, `Bytes (Write)` | Keys are public constants in `IOKit/storage/IOBlockStorageDriver.h`; same source as `iostat`. Cumulative per device, delta per tick. Works in sandbox: the app target sets `ENABLE_APP_SANDBOX = YES` (`project.pbxproj:401,435`) and the `.integration` suite `IOKitDiskIntegrationTests` proves statistics access inside the sandboxed test host. |
+| Network throughput | `sysctl {CTL_NET, PF_LINK, NETLINK_GENERIC, IFMIB_IFDATA, <index>, IFDATA_GENERAL}` → `ifmibdata` → `ifmd_data.ifi_ibytes` / `ifi_obytes`, with the index count from `IFMIB_SYSTEM`/`IFMIB_IFCOUNT` | Genuinely 64-bit counters from public headers (`net/if_mib.h`: `IFMIB_SYSTEM` :79, `IFMIB_IFDATA` :80, `IFDATA_GENERAL` :86, `IFMIB_IFCOUNT` :94, `NETLINK_GENERIC` :100), no entitlement. Cumulative per interface, delta per tick; indices are sparse, so `ENOENT`/`ENXIO`/`EINVAL` on one index is a gap, not a failure. Works in sandbox: the `.integration` suite `SysctlNetworkIntegrationTests` proves the reads inside the sandboxed test host. **Corrected 2026-09-10**: the first implementation used the routing socket (`NET_RT_IFLIST2` → `if_msghdr2` → `if_data64`), whose fields are declared `u_int64_t` but filled by this driver with only the low 32 bits. Measured: `en1` at 13 563 204 219 via this MIB against 678 301 696 via the routing socket at the same moment — the low 32 bits exactly. The wrap every 4 GB made the summed delta negative, so R11.4 discarded the tick and the totals appeared to reset. |
 
-All v1 data sources are public APIs: Mach for CPU and memory, Foundation and IOKit block storage statistics for disk.
+All v1 data sources are public APIs: Mach for CPU and memory, Foundation and IOKit block storage statistics for disk, and sysctl for network.
 
 ### 6.4 Concurrency
 - Swift 6 strict concurrency, default MainActor isolation for the module.
@@ -311,9 +357,12 @@ All v1 data sources are public APIs: Mach for CPU and memory, Foundation and IOK
 | `memCached` | `#4D8DFF` | Cached segment |
 | `memFree` | `#3DD68C` | Free segment |
 | `diskAccent` | `#3DD68C` | Disk gauge and throughput icons (same green as `memFree`; the reference's amber start of the arc is P2, R10.10) |
+| `networkAccent` | `#C659E4` | Network header glyph (sampled from the globe in `06-panel-network.png`) |
+| `networkDownload` | `#3DD68C` | Download rate and its graph line (same green as `memFree` and `diskAccent`) |
+| `networkUpload` | `#4D8DFF` | Upload rate and its graph line (same blue as `cpuAccent` and `memCached`) |
 | `gpuAccent` | `#3DD68C` | GPU gauge and graph (v2) |
 
-Colors live in an asset catalog with light variants (F7). Hex values are estimates from the screenshots and should be sampled precisely during implementation.
+Colors live in an asset catalog with light variants (F7). Hex values are estimates from the screenshots and should be sampled precisely during implementation; `networkAccent` was sampled that way on 2026-09-10, which is why it is not the `#A66BFF` the design first estimated by eye.
 
 ### 7.2 Typography
 - System font. Big gauge values: 22 pt bold, rounded design. Labels: 11 pt. Key/value rows: 12 pt with values in medium weight.
@@ -333,17 +382,17 @@ Colors live in an asset catalog with light variants (F7). Hex values are estimat
 └─────────────────────────────────────────┘
 ```
 
-The Disk card omits the history graph row; its footer is the read/write throughput row (4.5).
+The Disk card omits the history graph row; its footer is the read/write throughput row (4.5). The Network card replaces the gauge-and-rows block with a two-column rates/totals block and keeps the history graph row, drawn as two lines instead of one filled area (4.6, R11.8).
 
 ---
 
 ## 8. Testing Strategy (Strict TDD)
 
 - Framework: Swift Testing (`@Test`, `#expect`).
-- **Domain**: pure functions. Tick-delta to percentage, memory breakdown math, disk used/fraction math, cumulative byte counters to bytes per second including the negative-delta reset, ring buffer behavior, P/E grouping. Written first, no mocks needed.
-- **Application**: `MetricsSampler` tested with fake providers injected through the ports. Assert that snapshots are published, history capacity holds, a throwing provider does not stop the loop, the first tick publishes disk capacity without throughput, and capacity is refreshed on the 10 s cadence (R10.7).
-- **Infrastructure**: thin integration tests that only assert shape (core count > 0, total memory > 0, boot volume total > 0, at least one block storage driver found). These are the only tests that hit real system APIs and are tagged `.tags(.integration)`.
-- **Presentation**: snapshot-free. Cards are given fixed snapshots in Previews; a couple of unit tests cover formatting helpers (percentage strings, byte formatting under a fixed locale, decimal capacity and `MB/s` throughput strings).
+- **Domain**: pure functions. Tick-delta to percentage, memory breakdown math, disk used/fraction math, cumulative byte counters to bytes per second including the negative-delta reset, the network Δ/Δt rule with its own re-seed (R11.4) and the interface filter truth table (R11.2), ring buffer behavior, P/E grouping. Written first, no mocks needed.
+- **Application**: `MetricsSampler` tested with fake providers injected through the ports. Assert that snapshots are published, history capacity holds, a throwing provider does not stop the loop, the first tick publishes disk capacity without throughput and network totals without rates (R11.5), capacity is refreshed on the 10 s cadence (R10.7), and the two network histories are appended together (R11.7).
+- **Infrastructure**: thin integration tests that only assert shape (core count > 0, total memory > 0, boot volume total > 0, at least one block storage driver found, the interface MIB returns at least one admitted interface whose counters are not truncated to 32 bits). The filter truth table and the saturating sum are unit-tested; the sysctl shape is integration. These are the only tests that hit real system APIs and are tagged `.tags(.integration)`.
+- **Presentation**: snapshot-free. Cards are given fixed snapshots in Previews; a couple of unit tests cover formatting helpers (percentage strings, byte formatting under a fixed locale, decimal capacity and `MB/s` throughput strings, the network strings under `en_US` and `de_DE`), the shared graph scale (R11.8) and the reduce-motion rule — `NetworkCardModel.animation(reduceMotion:)` delegates to the CPU card's, as the Disk card does.
 - Target: 80%+ on Domain and Application. Infrastructure is exempt from coverage goals.
 
 ---
@@ -357,7 +406,8 @@ The Disk card omits the history graph row; its footer is the read/write throughp
 | M3 | Memory | vm_statistics provider, Memory card with stacked bar and legend. |
 | M4 | Polish | Launch at login, settings, light mode, animation and performance pass. |
 | M5 | Disk | `DiskMetricsProvider` port, IOKit throughput + volume capacity adapter, sampler extension, Disk card (section 5.7). Ship v1. |
-| M6 | GPU (v2) | Section 11. |
+| M6 | Network | `NetworkMetricsProvider` port, sysctl adapter, sampler extension, Network card (section 5.8), panel scroll cap. |
+| M7 | GPU (v2) | Section 11. |
 
 ---
 
@@ -372,19 +422,21 @@ The Disk card omits the history graph row; its footer is the read/write throughp
 | `IOBlockStorageDriver` counters are per device and cumulative | Wrong rate after an eject or mount, or on multi-disk Macs | Sum over the drivers present on each tick, re-seed on a negative delta (R10.4), cover with a fake provider. |
 | Important-usage capacity query at 1 Hz | Sampling CPU creeps toward the 1% budget | Refresh capacity at most every 10 s (R10.7); profile in M5. |
 | Popover grows with a third card | Panel taller than short displays allow | Measured in M5: 678 pt with two cards → 871 pt with three (the Disk card adds 175 pt, the shortest of the three since it has no graph). Height still fits content (R2.2) and still fits a 14" display. |
+| Popover grows with a fourth card | Four cards no longer fit a 14" display | Measured in M6: 1049 pt with four (370 CPU + 278 Memory + 175 Disk + 166 Network + 60 chrome), against roughly 945 pt of visible frame on a 14" display at default scaling. Mitigation: the visible-frame cap with scrolling (R2.5), which pins the panel at 921 pt there; manual check on the 14" display. |
+| Interface churn resets a per-interface counter | Totals dip, and a wrapped delta would spike the rate | Negative-delta re-seed (R11.4) and the documented totals caveat (R11.3). |
 
 Profiling note: the Instruments pass named in the third row (Time Profiler + SwiftUI template, panel closed then open) is a manual M4 task, not an automated one. Its measured CPU and RSS numbers are recorded in `openspec/changes/polish-module/apply-progress.md` alongside the rest of the M4 manual checklist.
 
 **Open questions**
 1. Should NET be reserved as a slot in the settings UI now, or left entirely to a future version? Proposed: leave it out of v1 entirely.
 2. Is light mode a v1 requirement or acceptable as P2? Proposed: P2.
-3. Should Disk get a menu bar module (throughput sparkline or a percentage)? Proposed: no, panel card only in v1; revisit together with NET.
+3. Should Disk get a menu bar module (throughput sparkline or a percentage)? Proposed: no, panel card only in v1; revisit together with NET. **Decided 2026-09-10: no Disk or Network menu bar module in v1. F9 stays Future; revisit both together.**
 
 ---
 
 ## 11. v2: GPU Module (deferred)
 
-Kept here so the design is not lost. Nothing in this section is built in v1.
+Kept here so the design is not lost. Nothing in this section is built in v1; it ships as milestone M7 (section 9).
 
 ### 11.1 Reference: `04-panel-gpu.png`
 - Header: GPU icon + "GPU".

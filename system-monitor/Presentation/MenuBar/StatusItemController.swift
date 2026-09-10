@@ -26,6 +26,10 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     /// controller and Cmd+, drive the same `SettingsWindowController` (ST-5).
     private let openSettings: @MainActor () -> Void
 
+    /// Opens the About window (MBW-15). Injected for the same reason as
+    /// `openSettings`: the composition root owns the one window controller.
+    private let openAbout: @MainActor () -> Void
+
     private let statusItem: NSStatusItem
     private let hostingView: PassthroughHostingView<StatusItemRootView>
     private let popover = NSPopover()
@@ -66,13 +70,15 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         settings: SettingsState,
         launchAtLogin: any LaunchAtLoginService,
         panelObserver: (any PanelVisibilityObserver)? = nil,
-        openSettings: @escaping @MainActor () -> Void = {}
+        openSettings: @escaping @MainActor () -> Void = {},
+        openAbout: @escaping @MainActor () -> Void = {}
     ) {
         self.state = state
         self.settings = settings
         self.launchAtLogin = launchAtLogin
         self.panelObserver = panelObserver
         self.openSettings = openSettings
+        self.openAbout = openAbout
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         hostingView = PassthroughHostingView(
             rootView: StatusItemRootView(state: state, settings: settings)
@@ -353,6 +359,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
 
     private static func selector(for action: ContextMenuItem.Action) -> Selector {
         switch action {
+        case .openAbout: #selector(handleOpenAbout)
         case .openSettings: #selector(handleOpenSettings)
         case .toggleLaunchAtLogin: #selector(toggleLaunchAtLogin)
         case .openLoginItems: #selector(openLoginItems)
@@ -367,12 +374,16 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         switch action {
         case .openSettings: ","
         case .quit: "q"
-        case .toggleLaunchAtLogin, .openLoginItems: ""
+        case .openAbout, .toggleLaunchAtLogin, .openLoginItems: ""
         }
     }
 
     @objc private func handleOpenSettings() {
         openSettings()
+    }
+
+    @objc private func handleOpenAbout() {
+        openAbout()
     }
 
     /// Registers or unregisters the app, following the live status (LAL-4).

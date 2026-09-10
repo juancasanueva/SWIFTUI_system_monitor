@@ -32,6 +32,7 @@ private final class LaunchReleaseProbe {
                     Notification(name: NSApplication.willTerminateNotification)
                 )
                 delegate.settingsWindow?.close()
+                delegate.aboutWindow?.close()
             }
 
             controller = delegate.statusItemController
@@ -86,6 +87,7 @@ struct AppDelegateCompositionTests {
                 Notification(name: NSApplication.willTerminateNotification)
             )
             delegate.settingsWindow?.close()
+            delegate.aboutWindow?.close()
         }
         return body(delegate)
     }
@@ -108,6 +110,7 @@ struct AppDelegateCompositionTests {
                 Notification(name: NSApplication.willTerminateNotification)
             )
             delegate.settingsWindow?.close()
+            delegate.aboutWindow?.close()
         }
         return await body(delegate)
     }
@@ -250,7 +253,7 @@ struct AppDelegateCompositionTests {
 
                 let afterCommand = window.windowNumber
                 let items = Self.actionItems(of: controller.makeContextMenu())
-                let fired = items.indices.contains(0) ? Self.fire(items[0]) : false
+                let fired = items.indices.contains(1) ? Self.fire(items[1]) : false
 
                 return (afterCommand, window.windowNumber, window.windowTitle, window.isWindowVisible, fired)
             }
@@ -275,8 +278,8 @@ struct AppDelegateCompositionTests {
                 }
 
                 let items = Self.actionItems(of: controller.makeContextMenu())
-                if items.indices.contains(0) {
-                    Self.fire(items[0])
+                if items.indices.contains(1) {
+                    Self.fire(items[1])
                 }
                 let afterMenu = window.windowNumber
 
@@ -293,6 +296,30 @@ struct AppDelegateCompositionTests {
         #expect(readings.visible)
     }
 
+    // MARK: - About window (MBW-15)
+
+    // menu-bar-widget — MBW-15 "About item opens the window", the
+    // composition-root half: the delegate builds one `AboutWindowController`
+    // and the context menu's first item shows it.
+    @Test func theAboutItemShowsTheDelegatesAboutWindow() async throws {
+        let readings = await MainActor.run { () -> (fired: Bool, visible: Bool, title: String?) in
+            Self.withLaunchedApp { delegate in
+                guard let window = delegate.aboutWindow, let controller = delegate.statusItemController else {
+                    return (false, false, nil)
+                }
+
+                let items = Self.actionItems(of: controller.makeContextMenu())
+                let fired = items.indices.contains(0) ? Self.fire(items[0]) : false
+
+                return (fired, window.isWindowVisible, window.windowTitle)
+            }
+        }
+
+        #expect(readings.fired, "the context menu must carry a working About item")
+        #expect(readings.visible)
+        #expect(readings.title == "About System Monitor")
+    }
+
     // MARK: - Lifetime
 
     // cpu-metrics — the loop must not outlive the app: `applicationWillTerminate`
@@ -303,7 +330,10 @@ struct AppDelegateCompositionTests {
             delegate.applicationDidFinishLaunching(
                 Notification(name: NSApplication.didFinishLaunchingNotification)
             )
-            defer { delegate.settingsWindow?.close() }
+            defer {
+                delegate.settingsWindow?.close()
+                delegate.aboutWindow?.close()
+            }
 
             let before = delegate.sampler?.isRunning ?? false
             delegate.applicationWillTerminate(

@@ -12,7 +12,8 @@ import AppKit
 /// exactly one `SettingsState`, so the widget, the settings window and the
 /// sampler always agree on the user's choices (ST-4, ST-7); and exactly one
 /// `SettingsWindowController`, so the context-menu item and Cmd+, show the same
-/// window instead of one each (ST-5).
+/// window instead of one each (ST-5). The About window follows the same
+/// single-owner rule (MBW-15).
 final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // The graph. Internal rather than private so `AppDelegateCompositionTests`
@@ -25,6 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private(set) var sampler: MetricsSampler?
     private(set) var cadence: SamplingCadenceController?
     private(set) var settingsWindow: SettingsWindowController?
+    private(set) var aboutWindow: AboutWindowController?
     private(set) var statusItemController: StatusItemController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -51,12 +53,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let cadence = SamplingCadenceController(sampler: sampler, settings: settingsState)
         let settingsWindow = SettingsWindowController(settings: settingsState)
+        let aboutWindow = AboutWindowController(
+            info: AboutModel.info(bundleInfo: Bundle.main.infoDictionary ?? [:])
+        )
         let statusItemController = StatusItemController(
             state: state,
             settings: settingsState,
             launchAtLogin: SMAppServiceLaunchAtLogin(),
             panelObserver: cadence,
-            openSettings: { [settingsWindow] in settingsWindow.show() }
+            openSettings: { [settingsWindow] in settingsWindow.show() },
+            openAbout: { [aboutWindow] in aboutWindow.show() }
         )
 
         self.state = state
@@ -64,6 +70,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.sampler = sampler
         self.cadence = cadence
         self.settingsWindow = settingsWindow
+        self.aboutWindow = aboutWindow
         self.statusItemController = statusItemController
 
         sampler.start()

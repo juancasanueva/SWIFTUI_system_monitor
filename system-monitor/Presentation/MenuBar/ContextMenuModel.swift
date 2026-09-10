@@ -13,6 +13,7 @@ nonisolated struct ContextMenuItem: Sendable, Equatable {
     /// Nested types need explicit `nonisolated` because the module defaults to
     /// main-actor isolation.
     nonisolated enum Action: Sendable, Equatable {
+        case openAbout
         case openSettings
         case toggleLaunchAtLogin
         case openLoginItems
@@ -31,13 +32,15 @@ nonisolated struct ContextMenuItem: Sendable, Equatable {
 /// Pure content of the status item context menu (MBW-10, LAL-4).
 nonisolated enum ContextMenuModel {
 
+    private static let aboutTitle = "About System Monitor"
     private static let settingsTitle = "Settings\u{2026}"
     private static let launchAtLoginTitle = "Launch at Login"
     private static let approvalPendingTitle = "Launch at Login (Requires Approval)\u{2026}"
     private static let quitTitle = "Quit System Monitor"
 
-    /// Always three items, in this order: "Settings…", the launch-at-login
-    /// item, "Quit System Monitor".
+    /// Always four items, in this order: "About System Monitor", "Settings…",
+    /// the launch-at-login item, "Quit System Monitor". About comes first, as
+    /// it does in every macOS application menu (MBW-15).
     ///
     /// The middle item follows the live status (LAL-4), which the caller reads
     /// when the menu is built rather than caching it, because the user can
@@ -55,6 +58,7 @@ nonisolated enum ContextMenuModel {
     ///   another window.
     static func items(launchAtLogin status: LaunchAtLoginStatus) -> [ContextMenuItem] {
         [
+            ContextMenuItem(title: aboutTitle, isChecked: false, action: .openAbout),
             ContextMenuItem(title: settingsTitle, isChecked: false, action: .openSettings),
             launchAtLoginItem(for: status),
             ContextMenuItem(title: quitTitle, isChecked: false, action: .quit),

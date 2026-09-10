@@ -186,13 +186,13 @@ ID MBW-7. The MEM module MUST show `MetricsState.memory?.fraction` as an integer
 
 ### Requirement: Context menu (Layer: Presentation) — R1.5, R6.4
 
-ID MBW-10. Right-clicking the status item MUST show a menu rebuilt on every open with exactly three action items in this order: "Settings…", "Launch at Login", "Quit System Monitor" (separators MAY appear between them). "Settings…" MUST call `SettingsWindowController.show()` (ST-5); "Launch at Login" MUST behave per LAL-4; "Quit System Monitor" MUST terminate the application. Left-click MUST keep toggling the popover.
+ID MBW-10. Right-clicking the status item MUST show a menu rebuilt on every open with exactly four action items in this order: "About System Monitor", "Settings…", "Launch at Login", "Quit System Monitor" (separators MAY appear between them). "About System Monitor" MUST call `AboutWindowController.show()` (MBW-15); "Settings…" MUST call `SettingsWindowController.show()` (ST-5); "Launch at Login" MUST behave per LAL-4; "Quit System Monitor" MUST terminate the application. Left-click MUST keep toggling the popover.
 
 #### Scenario: Item titles and order
 
 - GIVEN a controller with fake settings and launch-at-login services
 - WHEN the context menu is built
-- THEN its action-item titles are `["Settings…", "Launch at Login", "Quit System Monitor"]` in that order
+- THEN its action-item titles are `["About System Monitor", "Settings…", "Launch at Login", "Quit System Monitor"]` in that order
 
 #### Scenario: Settings item opens the window
 
@@ -205,6 +205,28 @@ ID MBW-10. Right-clicking the status item MUST show a menu rebuilt on every open
 - GIVEN the same controller
 - WHEN the "Quit System Monitor" item is inspected
 - THEN its action is the application terminate action
+
+### Requirement: About window (Layer: Presentation) — R6.2
+
+ID MBW-15. The app MUST own exactly one About window, created lazily on the first show and reused afterwards, titled "About System Monitor", closable but not resizable, pinned to the `darkAqua` appearance and hosting `AboutView` at its fitting size. The content MUST be derived from a pure `AboutInfo` value: the app name and tagline as constants, the version as `"<CFBundleShortVersionString> (<CFBundleVersion>)"` read from the bundle info dictionary (bare version without a build, `"Unknown"` without a version), the credits (Developer, then two Testers), three links — Website, Developer, Email — each an absolute URL, the email one using `mailto`, and an "MIT license" line above the footer.
+
+#### Scenario: About item opens the window
+
+- GIVEN a launched app
+- WHEN the "About System Monitor" action fires
+- THEN the About window is visible and titled "About System Monitor"
+
+#### Scenario: One About window
+
+- GIVEN the About window was shown, then closed
+- WHEN it is shown again
+- THEN the same window (by number) is reused
+
+#### Scenario: Version reads the bundle
+
+- GIVEN an info dictionary with version `1.0.0` and build `7`
+- WHEN the About info is built
+- THEN its version text is `"1.0.0 (7)"`
 
 ### Requirement: Popover pinned to the dark appearance (Layer: Presentation) — 7.1, PRD OQ2 (decided: dark only in v1)
 

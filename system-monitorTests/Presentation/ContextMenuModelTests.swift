@@ -13,28 +13,29 @@ import Testing
 @Suite("Context menu model", .timeLimit(.minutes(1)))
 struct ContextMenuModelTests {
 
+    private static let aboutTitle = "About System Monitor"
     private static let settingsTitle = "Settings\u{2026}"
     private static let launchTitle = "Launch at Login"
     private static let quitTitle = "Quit System Monitor"
 
-    /// The launch-at-login item, which is always the middle one.
+    /// The launch-at-login item, which is always the third one.
     private static func launchItem(_ status: LaunchAtLoginStatus) throws -> ContextMenuItem {
         let items = ContextMenuModel.items(launchAtLogin: status)
-        return try #require(items.dropFirst().first)
+        return try #require(items.dropFirst(2).first)
     }
 
-    // menu-bar-widget — "Item titles and order": exactly three items, in that
+    // menu-bar-widget — "Item titles and order": exactly four items, in that
     // order, for every status. Parameterised so no status can quietly add,
     // drop or reorder an item.
     @Test(arguments: LaunchAtLoginStatus.allCases)
-    func everyStatusYieldsTheSameThreeItemsInOrder(status: LaunchAtLoginStatus) {
+    func everyStatusYieldsTheSameFourItemsInOrder(status: LaunchAtLoginStatus) {
         let items = ContextMenuModel.items(launchAtLogin: status)
 
-        #expect(items.count == 3)
-        #expect(items.first?.title == Self.settingsTitle)
+        #expect(items.count == 4)
+        #expect(items.first?.title == Self.aboutTitle)
+        #expect(items.dropFirst().first?.title == Self.settingsTitle)
         #expect(items.last?.title == Self.quitTitle)
-        #expect(items.map(\.action).first == .openSettings)
-        #expect(items.map(\.action).last == .quit)
+        #expect(items.map(\.action) == [.openAbout, .openSettings, items[2].action, .quit])
     }
 
     // menu-bar-widget — "Item titles and order": the exact title list for the
@@ -42,7 +43,7 @@ struct ContextMenuModelTests {
     @Test func theDefaultStatusProducesTheDocumentedTitleList() {
         let titles = ContextMenuModel.items(launchAtLogin: .notRegistered).map(\.title)
 
-        #expect(titles == [Self.settingsTitle, Self.launchTitle, Self.quitTitle])
+        #expect(titles == [Self.aboutTitle, Self.settingsTitle, Self.launchTitle, Self.quitTitle])
     }
 
     // menu-bar-widget — MBW-10: the surrounding items never carry a checkmark,
@@ -52,6 +53,7 @@ struct ContextMenuModelTests {
         let items = ContextMenuModel.items(launchAtLogin: status)
 
         #expect(items.first?.isChecked == false)
+        #expect(items.dropFirst().first?.isChecked == false)
         #expect(items.last?.isChecked == false)
     }
 

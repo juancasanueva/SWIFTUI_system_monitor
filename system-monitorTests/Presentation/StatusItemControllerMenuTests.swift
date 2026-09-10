@@ -34,9 +34,10 @@ struct StatusItemControllerMenuTests {
     /// Index of each action item in the built menu, matching
     /// `ContextMenuModel.items(launchAtLogin:)`.
     private enum Item {
-        static let settings = 0
-        static let launchAtLogin = 1
-        static let quit = 2
+        static let about = 0
+        static let settings = 1
+        static let launchAtLogin = 2
+        static let quit = 3
     }
 
     /// Builds a controller over fakes, runs `body`, then drops it.
@@ -49,6 +50,7 @@ struct StatusItemControllerMenuTests {
         launchAtLogin: FakeLaunchAtLoginService = FakeLaunchAtLoginService(),
         modules: [MetricModule] = MetricModule.menuBarOrder,
         openSettings: @escaping @MainActor () -> Void = {},
+        openAbout: @escaping @MainActor () -> Void = {},
         _ body: @MainActor (StatusItemController) -> T
     ) -> T {
         let settings = SettingsState(
@@ -58,7 +60,8 @@ struct StatusItemControllerMenuTests {
             state: MetricsState(),
             settings: settings,
             launchAtLogin: launchAtLogin,
-            openSettings: openSettings
+            openSettings: openSettings,
+            openAbout: openAbout
         )
         return body(controller)
     }
@@ -86,14 +89,50 @@ struct StatusItemControllerMenuTests {
     // MARK: - Menu shape (MBW-10)
 
     // menu-bar-widget — MBW-10 "Item titles and order"
-    @Test func theContextMenuHasTheThreeActionItemsInOrder() async {
+    @Test func theContextMenuHasTheFourActionItemsInOrder() async {
         let titles = await Self.withController(
             launchAtLogin: FakeLaunchAtLoginService(status: .notRegistered)
         ) { controller in
             Self.actionItems(of: controller.makeContextMenu()).map(\.title)
         }
 
-        #expect(titles == ["Settings\u{2026}", "Launch at Login", "Quit System Monitor"])
+        #expect(titles == ["About System Monitor", "Settings\u{2026}", "Launch at Login", "Quit System Monitor"])
+    }
+
+    // menu-bar-widget — MBW-15 "About item opens the window", closure half.
+    @Test func theAboutItemCallsTheInjectedOpenAboutClosureOnce() async {
+        let opens = await MainActor.run { () -> Int in
+            let counter = OpenSettingsCounter()
+
+            Self.withController(openAbout: { counter.increment() }) { controller in
+                let items = Self.actionItems(of: controller.makeContextMenu())
+                #expect(Self.fire(items[Item.about]))
+            }
+
+            return counter.count
+        }
+
+        #expect(opens == 1)
+    }
+
+    // menu-bar-widget — MBW-15 "About item opens the window", against the real
+    // window controller the composition root injects.
+    @Test func theAboutItemOpensTheRealAboutWindow() async {
+        let observed = await MainActor.run { () -> (isVisible: Bool, title: String?) in
+            let window = AboutWindowController(info: AboutModel.info(bundleInfo: [:]))
+            defer { window.close() }
+
+            var result = (isVisible: false, title: String?.none)
+            Self.withController(openAbout: { window.show() }) { controller in
+                let items = Self.actionItems(of: controller.makeContextMenu())
+                #expect(Self.fire(items[Item.about]))
+                result = (window.isWindowVisible, window.windowTitle)
+            }
+            return result
+        }
+
+        #expect(observed.isVisible)
+        #expect(observed.title == "About System Monitor")
     }
 
     // menu-bar-widget — MBW-10 "Settings item opens the window", closure half.

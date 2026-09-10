@@ -244,7 +244,7 @@ struct ReleaseMetadataTests {
             "CURRENT_PROJECT_VERSION = 1;",
             "ENABLE_APP_SANDBOX = NO;",
             "ENABLE_HARDENED_RUNTIME = YES;",
-            "MACOSX_DEPLOYMENT_TARGET = 26.5;"
+            "MACOSX_DEPLOYMENT_TARGET = 15.0;"
         ] {
             #expect(blocks.filter { $0.contains(setting) }.count == 2, "\(setting) must hold in both blocks")
         }
@@ -535,7 +535,7 @@ struct ReleaseWorkflowContractTests {
     /// request. The negatives are therefore asserted as hard as the positives.
     /// The runner, the Xcode pin and `concurrency:` are design-owned pins, kept
     /// here because nothing else would notice them drifting — and the Xcode pin
-    /// is load-bearing: the app's deployment target is macOS 26.5.
+    /// is load-bearing: the app's deployment target is macOS 15.0.
     @Test("The workflow is triggered only by a pushed v* tag")
     func onlyAVersionTagTriggersTheWorkflow() throws {
         let workflow = try ReleasePipelineSources.text(ReleasePipelineSources.workflowPath)

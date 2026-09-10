@@ -18,7 +18,7 @@ System Monitor keeps a compact CPU and memory widget in the menu bar, each with 
 
 ## Requirements
 
-- macOS 26.5 or later
+- macOS 15 (Sequoia) or later
 - Apple Silicon
 - Xcode 26 with Swift 6 to build from source
 
@@ -57,7 +57,7 @@ Or download the latest `System-Monitor-<version>.zip` from
 
 The build is notarized and stapled, so the first launch is a single ordinary
 "Open" confirmation — no right-click workaround, and no network access needed to
-get past Gatekeeper. Apple Silicon and macOS 26.5 or later only.
+get past Gatekeeper. Apple Silicon and macOS 15 or later only.
 
 To remove a cask install, `brew uninstall --cask --zap system-monitor` also
 deletes System Monitor's preferences and caches. System Monitor creates no

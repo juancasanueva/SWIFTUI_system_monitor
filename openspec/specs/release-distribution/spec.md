@@ -160,7 +160,7 @@ Both app-target build configurations MUST declare the same values, because a Deb
 - GIVEN the two app-target build configurations
 - WHEN their build settings are compared line by line
 - THEN they are identical apart from their name
-- AND both declare `ARCHS = arm64`, `ENABLE_APP_SANDBOX = NO`, `ENABLE_HARDENED_RUNTIME = YES` and `MACOSX_DEPLOYMENT_TARGET = 26.5`
+- AND both declare `ARCHS = arm64`, `ENABLE_APP_SANDBOX = NO`, `ENABLE_HARDENED_RUNTIME = YES` and `MACOSX_DEPLOYMENT_TARGET = 15.0`
 - Verification: `unit`
 
 #### Scenario: No entitlements file exists anywhere in the repository

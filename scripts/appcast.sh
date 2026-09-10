@@ -61,7 +61,7 @@ SPARKLE_TARBALL_URL="https://github.com/sparkle-project/Sparkle/releases/downloa
 # `AppcastScriptContractTests` reads both and fails when they disagree: a feed
 # emitted with a floor the offline validator rejects is a feed every installed
 # copy refuses, discovered only after publication.
-MINIMUM_SYSTEM_VERSION="26.5"
+MINIMUM_SYSTEM_VERSION="15.0"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT

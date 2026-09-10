@@ -94,7 +94,7 @@ struct AppcastDocumentTests {
         #expect(item.shortVersionString == "1.0.0")
         #expect(item.edSignature == "c2lnbmF0dXJlLWZpeHR1cmU=")
         #expect(item.length == 12_345_678)
-        #expect(item.minimumSystemVersion == "26.5")
+        #expect(item.minimumSystemVersion == "15.0")
         #expect(item.enclosureURL.scheme == "https")
         #expect(item.enclosureURL.host() == "github.com")
         #expect(

@@ -4,7 +4,7 @@
 |---|---|
 | Status | Draft v4 (Network card added on 2026-09-10 as F11 / M6; GPU moved to M7) |
 | Date | 2026-09-10 |
-| Platform | macOS 26.5+ (Xcode project deployment target), Apple Silicon first |
+| Platform | macOS 15+ (Xcode project deployment target), Apple Silicon first |
 | Stack | Swift 6, SwiftUI, AppKit (NSStatusItem / NSPopover), Mach APIs for metrics |
 | Reference images | `docs/reference/` (see section 4) |
 

@@ -21,7 +21,7 @@ projects:
     stack: Swift / SwiftUI / AppKit macOS app (Xcode project)
     project_file: system-monitor.xcodeproj
     scheme: system-monitor
-    deployment_target: "26.5 (MACOSX_DEPLOYMENT_TARGET, every configuration of both targets)"
+    deployment_target: "15.0 (MACOSX_DEPLOYMENT_TARGET, every configuration of both targets)"
     swift_version: "6.0 (SWIFT_VERSION build setting); the app target also sets SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor"
     test_command: "xcodebuild -project system-monitor.xcodeproj -scheme system-monitor -destination 'platform=macOS' -quiet test"
     unit_test_command: "xcodebuild -project system-monitor.xcodeproj -scheme system-monitor -destination 'platform=macOS' -quiet test -only-testing:system-monitorTests"

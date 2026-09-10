@@ -68,7 +68,7 @@ nonisolated struct AppcastDocument: Sendable, Hashable {
     /// not a compatibility range to honour. `AppcastScriptContractTests` reads
     /// both and fails when they disagree, because two constants that must agree
     /// are only kept in step by a test that reads both.
-    static let expectedMinimumSystemVersion = "26.5"
+    static let expectedMinimumSystemVersion = "15.0"
 
     /// Items in document order, newest first.
     let items: [Item]

@@ -297,11 +297,11 @@ may change without a coordinated change there:
 | Bundle identifier | `com.juancasanueva.system-monitor` |
 | Version stamping | `CFBundleShortVersionString` = tag minus `v`; `CFBundleVersion` = run number, strictly increasing |
 | Signature | Developer ID Application, team `Z3S5JK8E38`, hardened runtime, notarized and stapled |
-| Floor | macOS 26.5, Apple Silicon (`arm64` only) for the app executable; the embedded `Sparkle.framework` is universal, which does not change the floor |
+| Floor | macOS 15.0, Apple Silicon (`arm64` only) for the app executable; the embedded `Sparkle.framework` is universal, which does not change the floor |
 | Update feed | `https://juancasanueva.github.io/SWIFTUI_system_monitor/appcast.xml`, republished by the same job on every **stable** tag; a prerelease publishes a release and no feed entry |
 
 The feed's minimum system version is emitted by `scripts/appcast.sh` as
-`MINIMUM_SYSTEM_VERSION="26.5"` and required by the offline validator as
+`MINIMUM_SYSTEM_VERSION="15.0"` and required by the offline validator as
 `AppcastDocument.expectedMinimumSystemVersion`. A test reads both and fails when
 they disagree, because a feed emitted with a floor the validator rejects is a
 feed every installed copy refuses — discovered only after publication.
@@ -415,7 +415,7 @@ Nothing was published; fix, delete the tag, tag again.
 of a `.p12` exported **with its private key**, or `P12_PASSWORD` does not match
 it. Re-export from Keychain Access and re-encode.
 
-**The archive fails on the deployment target.** The app targets macOS 26.5, and
+**The archive fails on the deployment target.** The app targets macOS 15.0, and
 the SDK that can build it ships with Xcode 26.6. If the runner image drops
 `/Applications/Xcode_26.6.app`, the Pin Xcode step fails immediately — which is
 the right place to fail. Update the pin rather than lowering the target.

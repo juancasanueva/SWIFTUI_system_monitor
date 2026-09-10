@@ -195,7 +195,7 @@ struct AppcastScriptContractTests {
         let script = try AppcastScriptSources.script()
         let expected = AppcastDocument.expectedMinimumSystemVersion
 
-        #expect(expected == "26.5")
+        #expect(expected == "15.0")
         #expect(
             script.contains("MINIMUM_SYSTEM_VERSION=\"\(expected)\""),
             "the emitter must declare MINIMUM_SYSTEM_VERSION=\"\(expected)\""

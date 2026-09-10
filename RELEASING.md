@@ -329,13 +329,13 @@ at the same `System-Monitor-<version>.zip` §7 specifies.
 | Tap repository | `juancasanueva/homebrew-system-monitor` (public) |
 | Tap name | `juancasanueva/system-monitor` |
 | Cask token | `system-monitor` |
-| Canonical install | `brew tap juancasanueva/system-monitor`, then `brew trust juancasanueva/system-monitor`, then `brew install --cask system-monitor` |
+| Canonical install | `brew trust juancasanueva/system-monitor`, then `brew tap juancasanueva/system-monitor`, then `brew install --cask system-monitor` |
 | Unambiguous form | `brew install --cask juancasanueva/system-monitor/system-monitor` |
 | Installed path | `/Applications/System-Monitor.app` — the same bundle name the zip carries |
 
-**Homebrew 6 requires tap trust.** It refuses to load a cask from a non-official
-tap until the tap is trusted, so the short install form needs
-`brew trust juancasanueva/system-monitor` first. Naming the tap or the
+**Homebrew 6 requires tap trust, before tapping.** Since 6.0.22 `brew tap`
+itself refuses, and rolls back, a non-official tap that carries a cask until the
+tap is trusted, so `brew trust juancasanueva/system-monitor` comes first. Naming the tap or the
 fully-qualified cask on the command line is itself the grant.
 
 **A direct-download copy blocks a plain install.** A user who dragged the zip

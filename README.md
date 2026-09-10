@@ -27,15 +27,15 @@ System Monitor keeps a compact CPU and memory widget in the menu bar, each with 
 With Homebrew:
 
 ```sh
-brew tap juancasanueva/system-monitor
 brew trust juancasanueva/system-monitor
+brew tap juancasanueva/system-monitor
 brew install --cask system-monitor
 ```
 
 That installs `/Applications/System-Monitor.app`, the same notarized build the
-releases page serves. Homebrew 6 refuses to load a cask from a third-party tap
-until the tap is trusted, which is what the middle line does; it grants nothing
-beyond this tap. The unambiguous form is
+releases page serves. Homebrew 6 refuses to load, and since 6.0.22 even to tap,
+a third-party tap that carries a cask until the tap is trusted, which is what
+the first line does; it grants nothing beyond this tap. The unambiguous form is
 `brew install --cask juancasanueva/system-monitor/system-monitor`.
 
 **Already have `System-Monitor.app` in `/Applications`?** Homebrew refuses to

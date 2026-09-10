@@ -41,6 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             cpuProvider: MachCPUProvider(),
             memoryProvider: MachMemoryProvider(),
             diskProvider: IOKitDiskProvider(capacity: VolumeCapacityReader()),
+            networkProvider: SysctlNetworkProvider(),
             topologyProvider: IORegistryCoreTopologyProvider(sysctl: SysctlReader()),
             interval: SamplingCadence.effective(
                 configured: settingsState.samplingInterval,

@@ -150,14 +150,67 @@ nonisolated struct DiskSamplingStep: Sendable {
     }
 }
 
-/// Drives CPU, memory and disk sampling and publishes each reading to `MetricsState`.
+/// Stateful counterpart of `DiskSamplingStep` without the capacity half.
+///
+/// Only the baseline crosses ticks: the totals are absolute, so a single read
+/// is already a publishable reading, and the previous counters exist purely to
+/// give the next one a window to divide by.
+///
+/// Like its siblings it declares no initialiser of its own: the memberwise one
+/// is what both the detached loop and `sampleOnce()` use to build a fresh step.
+nonisolated struct NetworkSamplingStep: Sendable {
+    let provider: any NetworkMetricsProvider
+    let previous: NetworkThroughputCounters?
+
+    /// Reads the counters and derives the snapshot for the elapsed window.
+    ///
+    /// A successful read always publishes: the totals are absolute, so the
+    /// first tick after a start shows them with both rates `nil` and the second
+    /// one adds the rates. The baseline is always re-seeded with `current`, so
+    /// a counter that fell costs exactly one tick of rates (NM-4).
+    ///
+    /// A failed read publishes nothing — there is no cached total worth
+    /// republishing — and drops the baseline, which is where this parts company
+    /// with `DiskSamplingStep`. The disk keeps its baseline and lets the next
+    /// success measure a longer window, because its counters belong to a fixed
+    /// set of drivers. Network counters are a sum over whichever interfaces
+    /// passed the filter at read time, so a window spanning an unread tick may
+    /// also span an interface appearing or disappearing, and the difference
+    /// would be published as a spike. Dropping the baseline turns that into one
+    /// rates-free tick instead (NM-8, design decision 3).
+    func advanced() -> (snapshot: NetworkSnapshot?, next: NetworkSamplingStep) {
+        guard let current = try? provider.readCounters() else {
+            return (nil, NetworkSamplingStep(provider: provider, previous: nil))
+        }
+
+        let rates = NetworkThroughputCalculator.rates(previous: previous, current: current)
+
+        return (
+            NetworkSnapshot(
+                totalIn: current.bytesIn,
+                totalOut: current.bytesOut,
+                downloadBytesPerSecond: rates?.downloadBytesPerSecond,
+                uploadBytesPerSecond: rates?.uploadBytesPerSecond
+            ),
+            NetworkSamplingStep(provider: provider, previous: current)
+        )
+    }
+}
+
+/// Drives CPU, memory, disk and network sampling and publishes each reading to
+/// `MetricsState`.
 ///
 /// The sampler itself is main-actor bound so AppKit can start and stop it
 /// synchronously, but the sampling work runs in a detached task; only the
-/// resulting `CPUSnapshot`, `MemorySnapshot` and `DiskSnapshot` values cross
-/// back to the main actor. All three providers are read within the same
-/// iteration, before any publish, so the three readings belong to the same
-/// tick.
+/// resulting `CPUSnapshot`, `MemorySnapshot`, `DiskSnapshot` and
+/// `NetworkSnapshot` values cross back to the main actor. All four providers
+/// are read within the same iteration, before any publish, so the four readings
+/// belong to the same tick.
+///
+/// The CPU delta, the disk throughput baseline and the network baseline all
+/// live in the detached task, so a restart costs each of them exactly one
+/// degraded tick: that is the whole price of an interval change (CM-2, DM-8,
+/// NM-6).
 @MainActor
 final class MetricsSampler {
 
@@ -165,6 +218,7 @@ final class MetricsSampler {
     private let cpuProvider: any CPUMetricsProvider
     private let memoryProvider: any MemoryMetricsProvider
     private let diskProvider: any DiskMetricsProvider
+    private let networkProvider: any NetworkMetricsProvider
     private let topologyProvider: any CoreTopologyProvider
     /// Cadence the loop sleeps for between iterations (CM-2).
     ///
@@ -182,6 +236,10 @@ final class MetricsSampler {
     /// the throughput baseline and the cached capacity the way the loop does.
     private var inlineDiskStep: DiskSamplingStep?
 
+    /// Network counterpart of `inlineDiskStep`, so repeated `sampleOnce()`
+    /// calls keep the baseline the loop would have kept.
+    private var inlineNetworkStep: NetworkSamplingStep?
+
     /// The running loop, `nil` while the sampler is stopped.
     private var task: Task<Void, Never>?
 
@@ -190,6 +248,7 @@ final class MetricsSampler {
         cpuProvider: any CPUMetricsProvider,
         memoryProvider: any MemoryMetricsProvider,
         diskProvider: any DiskMetricsProvider,
+        networkProvider: any NetworkMetricsProvider,
         topologyProvider: any CoreTopologyProvider,
         interval: Duration = .seconds(1),
         startupGap: Duration = .milliseconds(100),
@@ -199,6 +258,7 @@ final class MetricsSampler {
         self.cpuProvider = cpuProvider
         self.memoryProvider = memoryProvider
         self.diskProvider = diskProvider
+        self.networkProvider = networkProvider
         self.topologyProvider = topologyProvider
         self.interval = interval
         self.startupGap = startupGap
@@ -219,6 +279,7 @@ final class MetricsSampler {
         let provider = cpuProvider
         let memoryProvider = memoryProvider
         let diskProvider = diskProvider
+        let networkProvider = networkProvider
         let topologyProvider = topologyProvider
         let interval = interval
         let startupGap = startupGap
@@ -242,6 +303,11 @@ final class MetricsSampler {
                 capacity: nil,
                 capacityReadAt: nil
             )
+            // Built inside the closure for the same reason as the disk step,
+            // and with the same price: a restart has no baseline, so its first
+            // iteration publishes totals with both rates `nil` and the one
+            // after it publishes rates again (NM-6).
+            var networkStep = NetworkSamplingStep(provider: networkProvider, previous: nil)
             // The first CPU read only seeds `previous`, so the second one
             // follows after a short gap and a real value appears almost
             // immediately. Memory is absolute and publishes on iteration one;
@@ -252,12 +318,15 @@ final class MetricsSampler {
                 let (cpuSnapshot, next) = step.advanced()
                 step = next
 
-                // All three reads happen before any publish, so the three
+                // All four reads happen before any publish, so the four
                 // readings belong to the same tick.
                 let memorySnapshot = memoryStep.read()
 
                 let (diskSnapshot, nextDisk) = diskStep.advanced()
                 diskStep = nextDisk
+
+                let (networkSnapshot, nextNetwork) = networkStep.advanced()
+                networkStep = nextNetwork
 
                 if let cpuSnapshot {
                     await state.apply(cpu: cpuSnapshot)
@@ -269,6 +338,10 @@ final class MetricsSampler {
 
                 if let diskSnapshot {
                     await state.apply(disk: diskSnapshot)
+                }
+
+                if let networkSnapshot {
+                    await state.apply(network: networkSnapshot)
                 }
 
                 do {
@@ -295,7 +368,9 @@ final class MetricsSampler {
     /// iteration (MM-5); the next iteration publishes CPU again. The disk step
     /// is discarded with it, so that same iteration publishes capacity with
     /// both rates `nil` and re-reads capacity regardless of its cadence (DM-8).
-    /// That one degraded tick is the whole price of an interval change.
+    /// The network step is discarded on the same terms and publishes its totals
+    /// with both rates `nil` for one iteration (NM-6). That one degraded tick
+    /// is the whole price of an interval change.
     func apply(interval newInterval: Duration) {
         guard newInterval != interval else { return }
 
@@ -316,7 +391,7 @@ final class MetricsSampler {
     /// Test seam: runs one iteration inline on the main actor and publishes
     /// whatever it produced.
     ///
-    /// It mirrors the loop body exactly — all three providers are read before
+    /// It mirrors the loop body exactly — all four providers are read before
     /// any publish — except that it runs on the main actor, so it is never used
     /// to assert where a read happened.
     func sampleOnce() {
@@ -341,6 +416,14 @@ final class MetricsSampler {
         let (diskSnapshot, nextDisk) = diskStep.advanced()
         inlineDiskStep = nextDisk
 
+        let networkStep = inlineNetworkStep ?? NetworkSamplingStep(
+            provider: networkProvider,
+            previous: nil
+        )
+
+        let (networkSnapshot, nextNetwork) = networkStep.advanced()
+        inlineNetworkStep = nextNetwork
+
         if let cpuSnapshot {
             state.apply(cpu: cpuSnapshot)
         }
@@ -351,6 +434,10 @@ final class MetricsSampler {
 
         if let diskSnapshot {
             state.apply(disk: diskSnapshot)
+        }
+
+        if let networkSnapshot {
+            state.apply(network: networkSnapshot)
         }
     }
 }

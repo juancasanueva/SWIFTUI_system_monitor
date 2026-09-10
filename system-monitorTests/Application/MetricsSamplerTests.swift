@@ -24,6 +24,7 @@ struct MetricsSamplerStepTests {
             throughput: [],
             capacities: [DiskFixtures.referenceCapacity]
         ),
+        networkProvider: FakeNetworkProvider = FakeNetworkProvider(counters: []),
         topology: CoreTopology = TickFixtures.performanceFirstTopology
     ) -> MetricsSampler {
         MetricsSampler(
@@ -31,6 +32,7 @@ struct MetricsSamplerStepTests {
             cpuProvider: provider,
             memoryProvider: memoryProvider,
             diskProvider: diskProvider,
+            networkProvider: networkProvider,
             topologyProvider: FakeCoreTopologyProvider(result: topology)
         )
     }
@@ -625,6 +627,309 @@ struct MetricsSamplerStepTests {
         #expect(result.next.previous == nil)
         #expect(provider.capacityCallCount == 1)
     }
+
+    // MARK: - Network
+    //
+    // Like the disk cases above, every scenario drives `sampleOnce()` with
+    // scripted `ContinuousClock.Instant`s derived from `NetworkFixtures.base`,
+    // so the rates are read off the counters' own stamps and no case waits on
+    // wall-clock time (convention 4).
+
+    // network-metrics — NM-5 "First step publishes totals without rates": the
+    // totals are absolute, so they publish on the very first tick while the
+    // rates still need a baseline. Nothing reaches either history yet.
+    @Test func theFirstNetworkStepPublishesTotalsWithBothRatesNil() async throws {
+        let state = await MetricsState()
+        let cpuProvider = FakeCPUProvider(samples: risingSamples())
+        let networkProvider = FakeNetworkProvider(counters: [NetworkFixtures.referencePrevious])
+        let sampler = await makeSampler(
+            state: state,
+            provider: cpuProvider,
+            networkProvider: networkProvider
+        )
+
+        await sampler.sampleOnce()
+
+        let network = try #require(await state.network)
+        #expect(network.totalIn == 3_849_995_000)
+        #expect(network.totalOut == 2_759_922_000)
+        #expect(network.downloadBytesPerSecond == nil)
+        #expect(network.uploadBytesPerSecond == nil)
+        #expect(await state.networkDownloadHistory.isEmpty)
+        #expect(await state.networkUploadHistory.isEmpty)
+        #expect(networkProvider.callCount == 1)
+    }
+
+    // network-metrics — NM-5 "Second step publishes rates": `sampleOnce()`
+    // keeps the baseline across calls, exactly as it does for the CPU delta and
+    // the disk throughput.
+    @Test func theSecondNetworkStepPublishesTheReferenceRates() async throws {
+        let state = await MetricsState()
+        let cpuProvider = FakeCPUProvider(samples: risingSamples())
+        let networkProvider = FakeNetworkProvider(
+            counters: [NetworkFixtures.referencePrevious, NetworkFixtures.referenceCurrent]
+        )
+        let sampler = await makeSampler(
+            state: state,
+            provider: cpuProvider,
+            networkProvider: networkProvider
+        )
+
+        await sampler.sampleOnce()
+        await sampler.sampleOnce()
+
+        let network = try #require(await state.network)
+        #expect(network.totalIn == 3_850_000_000)
+        #expect(network.totalOut == 2_760_000_000)
+        #expect(network.downloadBytesPerSecond == 5_000)
+        #expect(network.uploadBytesPerSecond == 78_000)
+        #expect(await state.networkDownloadHistory.ordered == [5_000])
+        #expect(await state.networkUploadHistory.ordered == [78_000])
+        #expect(await state.cpu != nil)
+    }
+
+    // network-metrics — NM-5 "Call counts advance together": one iteration is
+    // one read of each of the four providers, which is what makes the four
+    // readings belong to the same tick.
+    @Test func allFourProvidersAreReadOncePerStep() async {
+        let state = await MetricsState()
+        let cpuProvider = FakeCPUProvider(samples: risingSamples())
+        let memoryProvider = FakeMemoryProvider(counts: [MemoryFixtures.eightGiB])
+        let diskProvider = FakeDiskProvider(
+            throughput: DiskFixtures.climbing(steps: 3),
+            capacities: [DiskFixtures.referenceCapacity]
+        )
+        let networkProvider = FakeNetworkProvider(counters: NetworkFixtures.climbing(steps: 3))
+        let sampler = await makeSampler(
+            state: state,
+            provider: cpuProvider,
+            memoryProvider: memoryProvider,
+            diskProvider: diskProvider,
+            networkProvider: networkProvider
+        )
+
+        await sampler.sampleOnce()
+        await sampler.sampleOnce()
+        await sampler.sampleOnce()
+
+        #expect(cpuProvider.callCount == 3)
+        #expect(memoryProvider.callCount == 3)
+        #expect(diskProvider.throughputCallCount == 3)
+        #expect(networkProvider.callCount == 3)
+    }
+
+    // network-metrics — NM-5: an empty script reads `NetworkFixtures.idle`,
+    // whose `interfaceCount` of 0 keeps both rates `nil` on every tick while
+    // the zero totals still publish, so the card is never a permanent skeleton.
+    @Test func aScriptWithNoAdmittedInterfacePublishesZeroTotalsWithoutRates() async throws {
+        let state = await MetricsState()
+        let cpuProvider = FakeCPUProvider(samples: risingSamples())
+        let networkProvider = FakeNetworkProvider(counters: [])
+        let sampler = await makeSampler(
+            state: state,
+            provider: cpuProvider,
+            networkProvider: networkProvider
+        )
+
+        await sampler.sampleOnce()
+        await sampler.sampleOnce()
+
+        let network = try #require(await state.network)
+        #expect(network.totalIn == 0)
+        #expect(network.totalOut == 0)
+        #expect(network.downloadBytesPerSecond == nil)
+        #expect(network.uploadBytesPerSecond == nil)
+        #expect(await state.networkDownloadHistory.isEmpty)
+        #expect(await state.networkUploadHistory.isEmpty)
+    }
+
+    // network-metrics — NM-4/NM-5 "Idle to populated transition is a re-seed
+    // tick": the crossing the idle-forever script above never reaches.
+    //
+    // A zero-interface reading is a valid reading carrying zero totals, and the
+    // step re-seeds its baseline with it unconditionally. The first populated
+    // tick after one therefore has a baseline of zero, and without the
+    // calculator's `previous.interfaceCount > 0` guard it would publish the
+    // machine's entire since-boot totals as one second of traffic and append
+    // that pair to both histories, where it would become the shared graph
+    // divisor. It must cost one rate-free tick instead, exactly like a restart.
+    @Test func theIdleToPopulatedTransitionCostsOneRateFreeTick() async throws {
+        let state = await MetricsState()
+        let cpuProvider = FakeCPUProvider(samples: risingSamples())
+        // Stamps 0, 1 and 2 rather than the shared reference pair: `idle` and
+        // `referencePrevious` are both stamped at 0, so a script built from them
+        // would make step 2 a zero-length window and the case would pass on the
+        // elapsed-time guard without ever exercising the baseline rule.
+        let networkProvider = FakeNetworkProvider(
+            counters: [
+                NetworkFixtures.counters(in: 0, out: 0, interfaceCount: 0, at: 0),
+                NetworkFixtures.counters(
+                    in: 3_849_995_000,
+                    out: 2_759_922_000,
+                    interfaceCount: 2,
+                    at: 1
+                ),
+                NetworkFixtures.counters(
+                    in: 3_850_000_000,
+                    out: 2_760_000_000,
+                    interfaceCount: 2,
+                    at: 2
+                )
+            ]
+        )
+        let sampler = await makeSampler(
+            state: state,
+            provider: cpuProvider,
+            networkProvider: networkProvider
+        )
+
+        await sampler.sampleOnce()
+
+        let idle = try #require(await state.network)
+        #expect(idle.totalIn == 0, "a zero-interface reading still publishes its totals")
+        #expect(idle.downloadBytesPerSecond == nil)
+        #expect(idle.uploadBytesPerSecond == nil)
+        #expect(await state.networkDownloadHistory.isEmpty)
+        #expect(await state.networkUploadHistory.isEmpty)
+
+        await sampler.sampleOnce()
+
+        let firstPopulated = try #require(await state.network)
+        #expect(firstPopulated.totalIn == 3_849_995_000, "the real totals must publish immediately")
+        #expect(firstPopulated.totalOut == 2_759_922_000)
+        #expect(
+            firstPopulated.downloadBytesPerSecond == nil,
+            "a zero-interface baseline must not become a window"
+        )
+        #expect(firstPopulated.uploadBytesPerSecond == nil)
+        #expect(await state.networkDownloadHistory.isEmpty, "no fabricated sample may reach the graph")
+        #expect(await state.networkUploadHistory.isEmpty)
+
+        await sampler.sampleOnce()
+
+        let rated = try #require(await state.network)
+        #expect(rated.downloadBytesPerSecond == 5_000, "the tick after the re-seed measures normally")
+        #expect(rated.uploadBytesPerSecond == 78_000)
+        #expect(await state.networkDownloadHistory.count == 1)
+        #expect(await state.networkUploadHistory.count == 1)
+    }
+
+    // MARK: - Network failure isolation (NM-8)
+
+    // network-metrics — NM-8 "Throw publishes nothing and keeps the last
+    // snapshot": unlike the disk, there is nothing cached to republish, so a
+    // failed read leaves the card showing the reading it already had.
+    @Test func aNetworkThrowPublishesNothingAndKeepsTheLastSnapshot() async throws {
+        let state = await MetricsState()
+        let cpuProvider = FakeCPUProvider(samples: risingSamples())
+        let networkProvider = FakeNetworkProvider(
+            counters: NetworkFixtures.climbing(steps: 5),
+            throwOnCall: [1]
+        )
+        let sampler = await makeSampler(
+            state: state,
+            provider: cpuProvider,
+            networkProvider: networkProvider
+        )
+
+        await sampler.sampleOnce()
+        await sampler.sampleOnce()
+
+        let network = try #require(await state.network)
+        #expect(network.totalIn == 3_849_995_000)
+        #expect(network.totalOut == 2_759_922_000)
+        #expect(network.downloadBytesPerSecond == nil)
+        #expect(await state.networkDownloadHistory.isEmpty)
+        #expect(await state.networkUploadHistory.isEmpty)
+        #expect(networkProvider.callCount == 2)
+        #expect(await state.cpu != nil)
+        #expect(await state.disk != nil)
+    }
+
+    // network-metrics — NM-8, same scenario one tick later: the throw lands
+    // after rates were already published, so both histories keep the samples
+    // they hold and neither gains a fabricated one.
+    @Test func aNetworkThrowAfterRatesKeepsThePublishedRatesAndBothHistories() async throws {
+        let state = await MetricsState()
+        let cpuProvider = FakeCPUProvider(samples: risingSamples())
+        let networkProvider = FakeNetworkProvider(
+            counters: NetworkFixtures.climbing(steps: 5),
+            throwOnCall: [2]
+        )
+        let sampler = await makeSampler(
+            state: state,
+            provider: cpuProvider,
+            networkProvider: networkProvider
+        )
+
+        await sampler.sampleOnce()
+        await sampler.sampleOnce()
+        await sampler.sampleOnce()
+
+        let network = try #require(await state.network)
+        #expect(network.totalIn == 3_850_000_000)
+        #expect(network.downloadBytesPerSecond == 5_000)
+        #expect(network.uploadBytesPerSecond == 78_000)
+        #expect(await state.networkDownloadHistory.ordered == [5_000])
+        #expect(await state.networkUploadHistory.ordered == [78_000])
+        #expect(await state.cpu != nil)
+    }
+
+    // network-metrics — NM-8 "The next success is a re-seed tick": the throw
+    // drops the baseline, because a window that spans an unread tick may also
+    // span an interface appearing or disappearing. One rates-free tick is the
+    // price; the tick after it is a normal one.
+    @Test func theSuccessAfterANetworkThrowIsARateFreeReSeedTick() async throws {
+        let state = await MetricsState()
+        let cpuProvider = FakeCPUProvider(samples: risingSamples())
+        let networkProvider = FakeNetworkProvider(
+            counters: NetworkFixtures.climbing(steps: 5),
+            throwOnCall: [1]
+        )
+        let sampler = await makeSampler(
+            state: state,
+            provider: cpuProvider,
+            networkProvider: networkProvider
+        )
+
+        await sampler.sampleOnce()
+        await sampler.sampleOnce()
+        await sampler.sampleOnce()
+
+        let reSeeded = try #require(await state.network)
+        #expect(reSeeded.totalIn == 3_850_000_000)
+        #expect(reSeeded.totalOut == 2_760_000_000)
+        #expect(reSeeded.downloadBytesPerSecond == nil)
+        #expect(reSeeded.uploadBytesPerSecond == nil)
+        #expect(await state.networkDownloadHistory.isEmpty)
+
+        await sampler.sampleOnce()
+
+        let recovered = try #require(await state.network)
+        #expect(recovered.downloadBytesPerSecond == 5_000)
+        #expect(recovered.uploadBytesPerSecond == 78_000)
+        #expect(await state.networkDownloadHistory.ordered == [5_000])
+        #expect(await state.networkUploadHistory.ordered == [78_000])
+    }
+
+    // network-metrics — NM-8 "CPU throws, network still publishes"
+    @Test func aThrowingCPUReadDoesNotPreventTheNetworkPublish() async throws {
+        let state = await MetricsState()
+        let cpuProvider = FakeCPUProvider(samples: risingSamples(), throwOnCall: [0])
+        let networkProvider = FakeNetworkProvider(counters: [NetworkFixtures.referencePrevious])
+        let sampler = await makeSampler(
+            state: state,
+            provider: cpuProvider,
+            networkProvider: networkProvider
+        )
+
+        await sampler.sampleOnce()
+
+        let network = try #require(await state.network)
+        #expect(network.totalIn == 3_849_995_000)
+        #expect(await state.cpu == nil)
+        #expect(await state.memory != nil)
+    }
 }
 
 // cpu-metrics — CM-1, CM-2 and CM-3.
@@ -666,6 +971,7 @@ struct MetricsSamplerLoopTests {
             throughput: [],
             capacities: [DiskFixtures.referenceCapacity]
         ),
+        networkProvider: FakeNetworkProvider = FakeNetworkProvider(counters: []),
         interval: Duration = .seconds(1),
         clock: ManualClock
     ) -> MetricsSampler {
@@ -674,6 +980,7 @@ struct MetricsSamplerLoopTests {
             cpuProvider: provider,
             memoryProvider: memoryProvider,
             diskProvider: diskProvider,
+            networkProvider: networkProvider,
             topologyProvider: FakeCoreTopologyProvider(result: TickFixtures.performanceFirstTopology),
             interval: interval,
             clock: clock
@@ -853,12 +1160,14 @@ struct MetricsSamplerLoopTests {
             throughput: DiskFixtures.climbing(),
             capacities: [DiskFixtures.referenceCapacity]
         )
+        let networkProvider = FakeNetworkProvider(counters: NetworkFixtures.climbing())
         let clock = ManualClock()
         let sampler = await makeSampler(
             state: state,
             provider: provider,
             memoryProvider: memoryProvider,
             diskProvider: diskProvider,
+            networkProvider: networkProvider,
             interval: .seconds(1),
             clock: clock
         )
@@ -887,6 +1196,14 @@ struct MetricsSamplerLoopTests {
         #expect(diskReads.count == 3)
         #expect(diskReads.allSatisfy { $0 == false })
         #expect(await state.disk != nil)
+
+        // network-metrics — NM-7 "Off-main reads". The port has a single read,
+        // so the recorded list is exactly one entry per iteration.
+        let networkReads = networkProvider.readOnMainThread
+        #expect(networkProvider.callCount == 2)
+        #expect(networkReads.count == 2)
+        #expect(networkReads.allSatisfy { $0 == false })
+        #expect(await state.network != nil)
     }
 
     // cpu-metrics — CM-3 "No wall-clock dependency": ten published snapshots,
@@ -1230,6 +1547,90 @@ struct MetricsSamplerLoopTests {
         #expect(disk.readBytesPerSecond == 27_100_000)
         #expect(disk.writeBytesPerSecond == 2_200_000)
         #expect(diskProvider.capacityCallCount == 1)
+        #expect(clock.sleepCount == 3)
+
+        await sampler.stop()
+    }
+
+    // MARK: - NM-6 runtime interval change, network half
+
+    // network-metrics — NM-6 "Restart costs one rates-unavailable tick": the
+    // restarted loop builds a fresh `NetworkSamplingStep`, so its first
+    // iteration has no baseline. The totals still publish, which is what keeps
+    // the card populated across a cadence change.
+    @Test func aRestartCostsOneRatesUnavailableNetworkTick() async throws {
+        let state = await MetricsState()
+        let provider = FakeCPUProvider(samples: climbingSamples())
+        let networkProvider = FakeNetworkProvider(counters: NetworkFixtures.climbing())
+        let clock = ManualClock()
+        let sampler = await makeSampler(
+            state: state,
+            provider: provider,
+            networkProvider: networkProvider,
+            interval: .seconds(1),
+            clock: clock
+        )
+
+        await sampler.start()
+        await clock.awaitSleepCount(1)
+        clock.advance(by: .milliseconds(100))
+        await clock.awaitSleepCount(2)
+
+        #expect(try #require(await state.network).downloadBytesPerSecond == 5_000)
+        #expect(await state.networkDownloadHistory.count == 1)
+
+        await sampler.apply(interval: .seconds(2))
+        await clock.awaitSleepCount(3)
+
+        let afterRestart = try #require(await state.network)
+        #expect(afterRestart.downloadBytesPerSecond == nil)
+        #expect(afterRestart.uploadBytesPerSecond == nil)
+        #expect(afterRestart.totalIn > 0)
+        #expect(afterRestart.totalOut > 0)
+        #expect(await state.networkDownloadHistory.count == 1)
+
+        clock.advance(by: .milliseconds(100))
+        await clock.awaitSleepCount(4)
+
+        let recovered = try #require(await state.network)
+        #expect(recovered.downloadBytesPerSecond == 5_000)
+        #expect(recovered.uploadBytesPerSecond == 78_000)
+        #expect(await state.networkDownloadHistory.count == 2)
+        #expect(await state.networkUploadHistory.count == 2)
+
+        await sampler.stop()
+    }
+
+    // network-metrics — NM-6 "Unchanged interval keeps the baseline": no
+    // restart, so the running loop keeps the step it already has and no tick is
+    // spent re-seeding.
+    @Test func applyingTheIntervalAlreadyInEffectKeepsTheNetworkBaseline() async throws {
+        let state = await MetricsState()
+        let provider = FakeCPUProvider(samples: climbingSamples())
+        let networkProvider = FakeNetworkProvider(counters: NetworkFixtures.climbing())
+        let clock = ManualClock()
+        let sampler = await makeSampler(
+            state: state,
+            provider: provider,
+            networkProvider: networkProvider,
+            interval: .seconds(1),
+            clock: clock
+        )
+
+        await sampler.start()
+        await clock.awaitSleepCount(1)
+        clock.advance(by: .milliseconds(100))
+        await clock.awaitSleepCount(2)
+
+        await sampler.apply(interval: .seconds(1))
+
+        clock.advance(by: .seconds(1))
+        await clock.awaitSleepCount(3)
+
+        let network = try #require(await state.network)
+        #expect(network.downloadBytesPerSecond == 5_000)
+        #expect(network.uploadBytesPerSecond == 78_000)
+        #expect(await state.networkDownloadHistory.count == 2)
         #expect(clock.sleepCount == 3)
 
         await sampler.stop()

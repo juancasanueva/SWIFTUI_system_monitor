@@ -248,4 +248,113 @@ struct MetricsStateTests {
             } == false
         )
     }
+
+    // MARK: - Network
+
+    /// A snapshot carrying the given rates over the reference totals, built by
+    /// hand so the state tests never depend on the calculator.
+    private func networkSnapshot(download: Double?, upload: Double?) -> NetworkSnapshot {
+        NetworkSnapshot(
+            totalIn: 3_850_000_000,
+            totalOut: 2_760_000_000,
+            downloadBytesPerSecond: download,
+            uploadBytesPerSecond: upload
+        )
+    }
+
+    @Test func freshStateHasNoNetworkSnapshotAndTwoEmptyHistories() async {
+        let state = await MetricsState()
+
+        #expect(await state.network == nil)
+        #expect(await state.networkDownloadHistory.count == 0)
+        #expect(await state.networkUploadHistory.count == 0)
+        #expect(await state.networkDownloadHistory.capacity == 120)
+        #expect(await state.networkUploadHistory.capacity == 120)
+    }
+
+    // network-metrics — NM-9 "Both histories grow together": the two series
+    // share an x axis only because every rated snapshot appends to both in the
+    // same call, so the counts and the raw values are asserted together.
+    @Test func applyingThreeRatedSnapshotsGrowsBothHistoriesTogether() async {
+        let state = await MetricsState()
+
+        await state.apply(network: networkSnapshot(download: 1_000, upload: 2_000))
+        await state.apply(network: networkSnapshot(download: 3_000, upload: 4_000))
+        await state.apply(network: networkSnapshot(download: 5_000, upload: 78_000))
+
+        #expect(await state.networkDownloadHistory.count == 3)
+        #expect(await state.networkUploadHistory.count == 3)
+        #expect(await state.networkDownloadHistory.ordered == [1_000, 3_000, 5_000])
+        #expect(await state.networkUploadHistory.ordered == [2_000, 4_000, 78_000])
+        #expect(await state.networkDownloadHistory.last == 5_000)
+        #expect(await state.networkUploadHistory.last == 78_000)
+        #expect(await state.network == networkSnapshot(download: 5_000, upload: 78_000))
+    }
+
+    // network-metrics — NM-9 "Nil rates append nothing": the totals still
+    // publish, so the card keeps rendering while the rates fall back to the
+    // unavailable glyph, and neither series gains a hole.
+    @Test func applyingASnapshotWithoutRatesStoresItAndAppendsNothing() async {
+        let state = await MetricsState()
+        let unavailable = NetworkSnapshot(
+            totalIn: 4_000_000_000,
+            totalOut: 3_000_000_000,
+            downloadBytesPerSecond: nil,
+            uploadBytesPerSecond: nil
+        )
+
+        await state.apply(network: networkSnapshot(download: 5_000, upload: 78_000))
+        await state.apply(network: networkSnapshot(download: 6_000, upload: 79_000))
+        await state.apply(network: unavailable)
+
+        #expect(await state.network == unavailable)
+        #expect(await state.networkDownloadHistory.count == 2)
+        #expect(await state.networkUploadHistory.count == 2)
+        #expect(await state.networkDownloadHistory.ordered == [5_000, 6_000])
+        #expect(await state.networkUploadHistory.ordered == [78_000, 79_000])
+    }
+
+    // network-metrics — NM-9 "Other state untouched"
+    @Test func applyingNetworkLeavesTheOtherMetricsAlone() async {
+        let state = await MetricsState()
+
+        await state.apply(network: networkSnapshot(download: 5_000, upload: 78_000))
+
+        #expect(await state.cpu == nil)
+        #expect(await state.memory == nil)
+        #expect(await state.disk == nil)
+        #expect(await state.cpuHistory.count == 0)
+        #expect(await state.memoryHistory.count == 0)
+        #expect(await state.network != nil)
+    }
+
+    @Test func applyingTheOtherMetricsLeavesTheNetworkStateAlone() async {
+        let state = await MetricsState()
+
+        await state.apply(cpu: snapshot(total: 0.42))
+        await state.apply(memory: memorySnapshot(fraction: 0.42))
+        await state.apply(disk: DiskFixtures.referenceSnapshot)
+
+        #expect(await state.network == nil)
+        #expect(await state.networkDownloadHistory.count == 0)
+        #expect(await state.networkUploadHistory.count == 0)
+    }
+
+    // network-metrics — NM-9 "Capacity bounds both histories"
+    @Test func theInjectedCapacityBoundsBothNetworkHistories() async {
+        let state = await MetricsState(historyCapacity: 3)
+
+        for step in 1...5 {
+            await state.apply(
+                network: networkSnapshot(download: Double(step), upload: Double(step) * 10)
+            )
+        }
+
+        #expect(await state.networkDownloadHistory.count == 3)
+        #expect(await state.networkUploadHistory.count == 3)
+        #expect(await state.networkDownloadHistory.ordered == [3, 4, 5])
+        #expect(await state.networkUploadHistory.ordered == [30, 40, 50])
+        #expect(await state.networkDownloadHistory.capacity == 3)
+        #expect(await state.networkUploadHistory.capacity == 3)
+    }
 }

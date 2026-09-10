@@ -407,4 +407,77 @@ struct AppDelegateCompositionTests {
         #expect(measured.afterLoop == measured.fitting, "the item must stay sized from its module set")
         #expect(measured.afterApply == measured.afterLoop, "a disk reading must not resize the widget")
     }
+
+    // MARK: - Network provider (NM-12)
+
+    // network-metrics — NM-12 "Real graph publishes network": the composition
+    // root injects `SysctlNetworkProvider()`, so the detached loop publishes the
+    // machine's real since-boot totals on its first iteration and real
+    // throughput rates on the next one.
+    //
+    // This is the only case that can tell the real adapter from a stand-in:
+    // every other network suite runs on `FakeNetworkProvider`, and a provider
+    // that reads no interface at all publishes zero totals forever while all of
+    // them stay green. The totals are what pin it — a rate pair of `0 B/s` is
+    // still a rate pair, so asserting only "rates are non-nil" would pass over a
+    // provider that never reads a byte.
+    @Test func theRealGraphPublishesRealNetworkReadings() async throws {
+        let readings = await Self.withRunningApp { delegate -> (first: NetworkSnapshot?, withRates: NetworkSnapshot?) in
+            guard let state = delegate.state else { return (nil, nil) }
+
+            let first = await Self.awaitValue { state.network }
+            let withRates = await Self.awaitValue { state.network?.downloadBytesPerSecond == nil ? nil : state.network }
+
+            return (first, withRates)
+        }
+
+        let first = try #require(readings.first, "the real graph must publish a network snapshot")
+
+        #expect(first.totalIn > 0, "the admitted interfaces must report received bytes since boot")
+        #expect(first.totalOut > 0, "the admitted interfaces must report sent bytes since boot")
+
+        let rated = try #require(readings.withRates, "the sysctl adapter must produce throughput rates")
+
+        #expect(rated.downloadBytesPerSecond != nil)
+        #expect(rated.uploadBytesPerSecond != nil)
+        #expect(rated.totalIn >= first.totalIn, "since-boot totals must never go backwards between ticks")
+        #expect(rated.totalOut >= first.totalOut)
+    }
+
+    // network-metrics — NM-12 "Modules and widget untouched": the network card
+    // is panel-only, so the widget's module set is still exactly the two it has
+    // always rendered, and publishing a network reading — the loop's own and a
+    // second, hand-built one — must never re-measure the item.
+    @Test func publishingNetworkReadingsLeavesTheModulesAndWidgetUnchanged() async throws {
+        let readings = await Self.withRunningApp {
+            delegate -> (published: Bool, afterLoop: CGFloat, afterApply: CGFloat, fitting: CGFloat)? in
+            guard
+                let state = delegate.state,
+                let settings = delegate.settingsState,
+                let controller = delegate.statusItemController
+            else {
+                return nil
+            }
+
+            let published = await Self.awaitValue { state.network } != nil
+            let afterLoop = controller.statusItemLength
+            state.apply(network: NetworkFixtures.referenceSnapshot)
+
+            return (
+                published: published,
+                afterLoop: afterLoop,
+                afterApply: controller.statusItemLength,
+                fitting: controller.contentFittingWidth(for: settings.menuBarModules)
+            )
+        }
+
+        let measured = try #require(readings, "the composition root must retain every collaborator")
+
+        #expect(measured.published, "the real graph must publish a network snapshot")
+        #expect(MetricModule.allCases == [.cpu, .memory])
+        #expect(MetricModule.menuBarOrder == [.cpu, .memory])
+        #expect(measured.afterLoop > 0, "the widget measured as empty")
+        #expect(measured.afterLoop == measured.fitting, "the item must stay sized from its module set")
+        #expect(measured.afterApply == measured.afterLoop, "a network reading must not resize the widget")
+    }
 }

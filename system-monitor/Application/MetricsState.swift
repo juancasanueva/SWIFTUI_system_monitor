@@ -4,11 +4,12 @@ import Observation
 /// Observable snapshot of the metrics the UI renders.
 ///
 /// The state lives on the main actor: the sampling loop runs elsewhere and hops
-/// here with plain `CPUSnapshot` and `MemorySnapshot` values, so views never
-/// observe a partially updated reading.
+/// here with plain `CPUSnapshot`, `MemorySnapshot`, `DiskSnapshot` and
+/// `NetworkSnapshot` values, so views never observe a partially updated
+/// reading.
 ///
-/// Each metric owns an independent pair of properties. `@Observable` tracks
-/// access per property, and the two `apply` overloads never touch each other's
+/// Each metric owns an independent set of properties. `@Observable` tracks
+/// access per property, and the `apply` overloads never touch each other's
 /// state, so a failing provider only stalls its own metric.
 @MainActor
 @Observable
@@ -33,9 +34,23 @@ final class MetricsState {
     /// disk series, so a history would only be memory nobody reads.
     private(set) var disk: DiskSnapshot?
 
+    /// Most recent network reading, `nil` until the first counter read lands.
+    private(set) var network: NetworkSnapshot?
+
+    /// Recent download rates in raw bytes per second, oldest first.
+    ///
+    /// Raw rather than normalised: the card decides the shared scale both
+    /// series are drawn against, and the state holds no unit and no colour.
+    private(set) var networkDownloadHistory: MetricHistory
+
+    /// Recent upload rates in raw bytes per second, over the same window.
+    private(set) var networkUploadHistory: MetricHistory
+
     init(historyCapacity: Int = 120) {
         self.cpuHistory = MetricHistory(capacity: historyCapacity)
         self.memoryHistory = MetricHistory(capacity: historyCapacity)
+        self.networkDownloadHistory = MetricHistory(capacity: historyCapacity)
+        self.networkUploadHistory = MetricHistory(capacity: historyCapacity)
     }
 
     /// Publishes a CPU reading and records its total in the history.
@@ -59,5 +74,24 @@ final class MetricsState {
     /// history (R10.8), so there is no series to append to here.
     func apply(disk snapshot: DiskSnapshot) {
         disk = snapshot
+    }
+
+    /// Publishes a network reading and records both rates in one call.
+    ///
+    /// The two histories are appended together, or not at all: the card draws
+    /// them as two series over one x axis (R5.2), so a tick that could only
+    /// contribute one of them would silently shift the other series against
+    /// time. A snapshot without rates still publishes its totals, which is what
+    /// keeps the card populated through a re-seed tick.
+    func apply(network snapshot: NetworkSnapshot) {
+        network = snapshot
+
+        guard
+            let download = snapshot.downloadBytesPerSecond,
+            let upload = snapshot.uploadBytesPerSecond
+        else { return }
+
+        networkDownloadHistory.append(download)
+        networkUploadHistory.append(upload)
     }
 }

@@ -301,6 +301,7 @@ struct SettingsStateTests {
                 throughput: [],
                 capacities: [DiskFixtures.referenceCapacity]
             ),
+            networkProvider: FakeNetworkProvider(counters: []),
             topologyProvider: FakeCoreTopologyProvider(result: TickFixtures.performanceFirstTopology),
             interval: interval,
             clock: clock

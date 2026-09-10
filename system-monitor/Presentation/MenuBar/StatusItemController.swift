@@ -30,6 +30,16 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     private let hostingView: PassthroughHostingView<StatusItemRootView>
     private let popover = NSPopover()
 
+    /// The panel's hosting controller, kept for the controller's whole life.
+    ///
+    /// Stored rather than built inline at configure time so `updatePanelCap()`
+    /// can swap `rootView` before each show (NC-12). Rebuilding the hosting
+    /// controller instead would replace the popover's content view controller
+    /// while it is being presented; swapping one value leaves the popover's own
+    /// lifecycle untouched, which is what keeps MBW-13's single `show` per
+    /// transition true.
+    private let hostingController: NSHostingController<PanelRootView>
+
     /// Module set the current `statusItem.length` was measured from.
     ///
     /// Keeping it here is what makes the re-measure conditional: a settings
@@ -67,6 +77,8 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         hostingView = PassthroughHostingView(
             rootView: StatusItemRootView(state: state, settings: settings)
         )
+        // Uncapped until the first show measures the presenting screen.
+        hostingController = NSHostingController(rootView: PanelRootView(state: state))
 
         // 1 Hz content updates must not rewrite Auto Layout constraints (PRD 6.5).
         hostingView.sizingOptions = []
@@ -127,9 +139,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         // (MBW-11).
         popover.appearance = NSAppearance(named: .darkAqua)
 
-        popover.contentViewController = NSHostingController(
-            rootView: PanelView().environment(state)
-        )
+        popover.contentViewController = hostingController
     }
 
     // MARK: - Measurement
@@ -146,6 +156,54 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         )
         measurementView.layoutSubtreeIfNeeded()
         return measurementView.fittingSize.width
+    }
+
+    /// Height the four-card panel wants, measured on a throwaway hosting view.
+    ///
+    /// Same shape as `measuredContentWidth(for:)`: the live hosting controller
+    /// is inside a popover and reports the size it was given, not the size its
+    /// content wants, so the question is asked of a fresh view instead.
+    private static func measuredPanelHeight(for state: MetricsState) -> CGFloat {
+        let measurementView = NSHostingView(rootView: PanelRootView(state: state))
+        measurementView.layoutSubtreeIfNeeded()
+        return measurementView.fittingSize.height
+    }
+
+    /// The cap the panel must be pinned to on a screen that tall, or `nil` when
+    /// it fits (NC-12).
+    ///
+    /// Internal, and taking the frame height as a plain number, so the whole
+    /// decision — measure the real panel, then apply the rule — is assertable
+    /// without a screen: a suite running on a 16" display can still ask what
+    /// happens on a 14" one.
+    static func panelMaxHeight(
+        for state: MetricsState,
+        visibleFrameHeight: CGFloat
+    ) -> CGFloat? {
+        PanelLayout.maxHeight(
+            fitting: measuredPanelHeight(for: state),
+            visibleFrameHeight: visibleFrameHeight
+        )
+    }
+
+    /// Resolves the cap for the screen the panel is about to appear on and
+    /// hands it to the hosting controller (NC-12).
+    ///
+    /// Called per show, not once at configure time, for two reasons: the CPU
+    /// card grows after its first snapshot, and the user can move the window to
+    /// another display or change scaling between opens. With no screen at all —
+    /// which is what a headless test host reports — no cap is applied and the
+    /// panel keeps its unbounded tree.
+    private func updatePanelCap() {
+        let visibleFrameHeight = (statusItem.button?.window?.screen ?? NSScreen.main)?
+            .visibleFrame.height
+
+        hostingController.rootView = PanelRootView(
+            state: state,
+            maxHeight: visibleFrameHeight.flatMap {
+                Self.panelMaxHeight(for: state, visibleFrameHeight: $0)
+            }
+        )
     }
 
     /// Measures `modules` and records the set the length now stands for.
@@ -233,6 +291,10 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         if popover.isShown {
             popover.performClose(nil)
         } else {
+            // Before the show, not during it: the cap is a `rootView` swap on a
+            // hosting controller the popover already owns, so it costs no
+            // second `show` and MBW-13 still sees one transition (NC-12).
+            updatePanelCap()
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         }
     }

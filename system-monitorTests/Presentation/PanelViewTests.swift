@@ -30,6 +30,8 @@ struct PanelViewTests {
 
     private static let diskSnapshot = DiskFixtures.referenceSnapshot
 
+    private static let networkSnapshot = NetworkFixtures.referenceSnapshot
+
     /// Card width inside the panel: the fixed 320 pt minus its 12 pt padding.
     private static let cardWidth: CGFloat = 296
 
@@ -41,9 +43,22 @@ struct PanelViewTests {
     /// three-card panel (DC-11).
     private static let threeCardChrome: CGFloat = 12 + 12 + 12 + 12
 
+    /// Three panel spacings plus its top and bottom padding, the chrome of the
+    /// four-card panel (NC-11).
+    private static let fourCardChrome: CGFloat = 12 + 12 + 12 + 12 + 12
+
     @MainActor
     private static func fittingSize(for state: MetricsState) -> CGSize {
         let hostingView = NSHostingView(rootView: PanelView().environment(state))
+        hostingView.layoutSubtreeIfNeeded()
+        return hostingView.fittingSize
+    }
+
+    @MainActor
+    private static func fittingSize(for state: MetricsState, maxHeight: CGFloat) -> CGSize {
+        let hostingView = NSHostingView(
+            rootView: PanelView(maxHeight: maxHeight).environment(state)
+        )
         hostingView.layoutSubtreeIfNeeded()
         return hostingView.fittingSize
     }
@@ -58,6 +73,17 @@ struct PanelViewTests {
     @MainActor
     private static func diskCardHeight(_ snapshot: DiskSnapshot?) -> CGFloat {
         cardHeight(DiskCard(snapshot: snapshot))
+    }
+
+    @MainActor
+    private static func networkCardHeight(for state: MetricsState) -> CGFloat {
+        cardHeight(
+            NetworkCard(
+                snapshot: state.network,
+                downloadHistory: state.networkDownloadHistory,
+                uploadHistory: state.networkUploadHistory
+            )
+        )
     }
 
     @MainActor
@@ -160,9 +186,9 @@ struct PanelViewTests {
 
     // MARK: - disk-card DC-1, DC-8, DC-11
 
-    // disk-card — "Card order"
-    @Test func thePanelStacksCPUThenMemoryThenDisk() {
-        #expect(PanelView.cards == [.cpu, .memory, .disk])
+    // disk-card DC-1 / network-card NC-1 — "Card order"
+    @Test func thePanelStacksCPUThenMemoryThenDiskThenNetwork() {
+        #expect(PanelView.cards == [.cpu, .memory, .disk, .network])
         #expect(Set(PanelView.cards) == Set(PanelCard.allCases))
     }
 
@@ -191,9 +217,11 @@ struct PanelViewTests {
 
     // disk-card — "Three-card height"
     //
-    // The panel is exactly its three cards plus its own chrome: measured
+    // The panel is exactly its cards plus its own chrome. Three cards measured
     // 871 pt = 370 (CPU) + 278 (memory) + 175 (disk) + 48, up from the 678 pt
-    // the two-card panel occupied. It still fits a 14" display.
+    // the two-card panel occupied; with the network card the panel now measures
+    // 1049 pt = 370 + 278 + 175 + 166 (network) + 60, which no longer fits a
+    // 14" display and is what NC-12's visible-frame cap exists for.
     @Test func thePanelGrowsByTheFullDiskCard() async {
         let state = await MetricsState()
         await state.apply(cpu: Self.snapshot(total: 0.42, coreCount: 12))
@@ -221,5 +249,125 @@ struct PanelViewTests {
 
         #expect(before == "\u{2014}", "the empty panel invented a reading")
         #expect(after == "87.4%")
+    }
+
+    // MARK: - network-card NC-1, NC-7, NC-11 (DC-1, DC-11 delta)
+
+    // network-card — "Card renders from fixed inputs"
+    @Test func theNetworkCardRendersFromItsSnapshotAndHistoriesAlone() async {
+        let state = await MetricsState()
+        await state.apply(network: Self.networkSnapshot)
+
+        let height = await Self.networkCardHeight(for: state)
+
+        #expect(height > 120, "the network card lost its readings, rows or history graph")
+    }
+
+    // network-card — "Height is stable"
+    //
+    // The network card renders its full skeleton before the first reading, so
+    // the first snapshot fills the card instead of resizing the popover.
+    @Test func theFirstNetworkSnapshotFillsTheCardWithoutResizingThePanel() async {
+        let state = await MetricsState()
+        await state.apply(cpu: Self.snapshot(total: 0.42, coreCount: 12))
+        await state.apply(memory: Self.memorySnapshot)
+        await state.apply(disk: Self.diskSnapshot)
+        let before = await Self.fittingSize(for: state)
+
+        await state.apply(network: Self.networkSnapshot)
+        let after = await Self.fittingSize(for: state)
+
+        #expect(after == before, "the network card changed size when its first reading landed")
+    }
+
+    // network-card — "Four-card height"
+    //
+    // Measured 1049 pt = 370 (CPU) + 278 (memory) + 175 (disk) + 166 (network)
+    // + 60 chrome.
+    //
+    // The three-card height is the sum of the three cards plus the chrome the
+    // panel carried while they were the whole panel, exactly as
+    // `thePanelGrowsByTheFullDiskCard` builds its two-card figure: a panel
+    // rendered with `network == nil` is not a three-card panel, because the
+    // network skeleton is already occupying its slot (NC-7).
+    @Test func thePanelGrowsByTheFullNetworkCard() async {
+        let state = await MetricsState()
+        await state.apply(cpu: Self.snapshot(total: 0.42, coreCount: 12))
+        await state.apply(memory: Self.memorySnapshot)
+        await state.apply(disk: Self.diskSnapshot)
+        await state.apply(network: Self.networkSnapshot)
+
+        let panel = await Self.fittingSize(for: state)
+        let cards = await Self.cardHeights(for: state)
+        let disk = await Self.diskCardHeight(state.disk)
+        let network = await Self.networkCardHeight(for: state)
+        let threeCardHeight = cards.cpu + cards.memory + disk + Self.threeCardChrome
+
+        #expect(network > 120, "the network card lost its readings, rows or history graph")
+        #expect(panel.height >= cards.cpu + cards.memory + disk + network + Self.fourCardChrome)
+        #expect(panel.height > threeCardHeight, "the panel did not grow with the fourth card")
+    }
+
+    // network-card — "Live update while open"
+    @Test func theNetworkReadingsFollowTheAppliedSnapshot() async {
+        let state = await MetricsState()
+        let before = await NetworkCardModel.rateReadings(for: state.network, locale: Self.english)
+
+        await state.apply(network: Self.networkSnapshot)
+        let after = await NetworkCardModel.rateReadings(for: state.network, locale: Self.english)
+        let download = await state.networkDownloadHistory.ordered
+        let upload = await state.networkUploadHistory.ordered
+
+        #expect(before.map(\.text) == ["\u{2014}", "\u{2014}"], "the empty panel invented a rate")
+        #expect(
+            after.map { $0.text.replacingOccurrences(of: "\u{00A0}", with: " ") }
+                == ["5.0 kB/s", "78.0 kB/s"]
+        )
+        #expect(download == [5_000])
+        #expect(upload == [78_000])
+    }
+
+    // MARK: - network-card NC-12 (visible-frame scroll cap)
+
+    // network-card — "Taller than the visible frame"
+    //
+    // A supplied cap is the panel's height, not a ceiling it may ignore: the
+    // four cards are 1 049 pt of content, so a 600 pt cap can only be honoured
+    // by scrolling them. The uncapped panel is measured in the same case, so
+    // the assertion cannot pass by the panel having shrunk on its own.
+    @Test func aSuppliedMaxHeightPinsThePanelAndScrollsItsCards() async {
+        let state = await MetricsState()
+        await state.apply(cpu: Self.snapshot(total: 0.42, coreCount: 12))
+        await state.apply(memory: Self.memorySnapshot)
+        await state.apply(disk: Self.diskSnapshot)
+        await state.apply(network: Self.networkSnapshot)
+
+        let capped = await Self.fittingSize(for: state, maxHeight: 600)
+        let uncapped = await Self.fittingSize(for: state)
+
+        #expect(capped.height == 600)
+        #expect(uncapped.height > 600, "the uncapped panel is not tall enough to prove the cap")
+        #expect(capped.width == 320, "the capped panel lost the fixed panel width")
+    }
+
+    // network-card — "Shorter than the visible frame": a cap above the content
+    // still pins the frame, which is why `StatusItemController` passes `nil`
+    // rather than the fitting height when the panel fits.
+    @Test func aMaxHeightAboveTheContentStillPinsTheFrame() async {
+        let state = await MetricsState()
+        await state.apply(cpu: Self.snapshot(total: 0.42, coreCount: 12))
+        await state.apply(memory: Self.memorySnapshot)
+        await state.apply(disk: Self.diskSnapshot)
+        await state.apply(network: Self.networkSnapshot)
+
+        let capped = await Self.fittingSize(for: state, maxHeight: 1500)
+        let uncapped = await Self.fittingSize(for: state)
+
+        #expect(capped.height == 1500)
+        #expect(uncapped.height < 1500)
+        #expect(
+            PanelLayout.maxHeight(fitting: uncapped.height, visibleFrameHeight: 1500) == nil,
+            "the rule would have capped a panel that fits"
+        )
     }
 }

@@ -85,6 +85,29 @@ struct StatusItemControllerTests {
         )
     }
 
+    /// A state carrying all four readings, so the panel the controller
+    /// measures is the full 1 049 pt four-card panel rather than a skeleton
+    /// that might happen to fit any frame (NC-12).
+    @MainActor
+    private static func fourCardState() -> MetricsState {
+        let state = MetricsState()
+        state.apply(
+            cpu: CPUSnapshot(
+                total: 0.42,
+                user: 0.315,
+                system: 0.105,
+                performanceAverage: 0.7,
+                efficiencyAverage: 0.1,
+                cores: (0..<8).map { CoreUsage(index: $0, usage: 0.7, level: .performance) }
+                    + (8..<12).map { CoreUsage(index: $0, usage: 0.1, level: .efficiency) }
+            )
+        )
+        state.apply(memory: MemoryFixtures.snapshot(from: MemoryFixtures.eightGiB))
+        state.apply(disk: DiskFixtures.referenceSnapshot)
+        state.apply(network: NetworkFixtures.referenceSnapshot)
+        return state
+    }
+
     /// Whether the recorder ever reported two opens in a row, which is the
     /// failure MBW-13 "No duplicate transitions" rules out.
     private static func hasConsecutiveOpens(_ events: [Bool]) -> Bool {
@@ -229,6 +252,60 @@ struct StatusItemControllerTests {
     @Test func thePaletteTokensAreUnchangedByTheDarkPopover() {
         #expect(Palette.cardBackground == Self.sRGB(0x1A2131))
         #expect(Palette.memAccent == Self.sRGB(0xF5A623))
+    }
+
+    // MARK: - Visible-frame cap (network-card NC-12)
+
+    // network-card — "Taller than the visible frame".
+    //
+    // The controller's half of the rule: it measures the real four-card panel
+    // and hands the figure to `PanelLayout`. Asserting it through a supplied
+    // number rather than a real `NSScreen` keeps the case deterministic on any
+    // display the suite happens to run on.
+    @Test func theControllerCapsTheFourCardPanelToA14InchVisibleFrame() async throws {
+        let state = await Self.fourCardState()
+
+        let cap = try #require(
+            await StatusItemController.panelMaxHeight(for: state, visibleFrameHeight: 945),
+            "the four-card panel fits a 14\" visible frame, so nothing was capped"
+        )
+
+        #expect(cap == 921, "the cap is not 945 pt minus the 24 pt screen margin")
+        #expect(cap < 945)
+    }
+
+    // network-card — "Shorter than the visible frame": on a frame the four-card
+    // panel fits inside, the controller supplies no cap at all, so the popover
+    // keeps today's unbounded tree.
+    @Test func theControllerSuppliesNoCapWhenTheFourCardPanelFits() async {
+        let state = await Self.fourCardState()
+
+        let cap = await StatusItemController.panelMaxHeight(
+            for: state,
+            visibleFrameHeight: 2000
+        )
+
+        #expect(cap == nil)
+    }
+
+    // network-card — the measurement is of the panel, not of a constant: the
+    // same state measured against a frame just above and just below its
+    // fitting height flips the branch, which is what proves the controller
+    // really measured 1 049 pt of cards.
+    @Test func theControllerMeasuresThePanelRatherThanAFixedHeight() async {
+        let state = await Self.fourCardState()
+
+        let capped = await StatusItemController.panelMaxHeight(
+            for: state,
+            visibleFrameHeight: 1000
+        )
+        let uncapped = await StatusItemController.panelMaxHeight(
+            for: state,
+            visibleFrameHeight: 1200
+        )
+
+        #expect(capped == 976, "1 000 pt minus the 24 pt margin is below the 1 049 pt panel")
+        #expect(uncapped == nil, "1 176 pt of room is more than the 1 049 pt panel needs")
     }
 
     // MARK: - Lifetime (MBW-12)

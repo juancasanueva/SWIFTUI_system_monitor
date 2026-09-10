@@ -117,6 +117,23 @@ struct CanvasComponentEqualityTests {
         }
     }
 
+    // network-card — NC-9 "Equatable redraw skip"
+    @Test func multiSeriesHistoryGraphsWithTheSameSeriesCompareEqual() async {
+        await MainActor.run {
+            let download = HistoryGraphSeries(samples: [0.4, 0.5], color: Palette.networkDownload, fillOpacity: 0)
+            let upload = HistoryGraphSeries(samples: [0.1, 0.9], color: Palette.networkUpload, fillOpacity: 0)
+
+            let base = HistoryGraph(series: [download, upload], capacity: 120)
+            let same = HistoryGraph(series: [download, upload], capacity: 120)
+            let reversedOrder = HistoryGraph(series: [upload, download], capacity: 120)
+            let differentCapacity = HistoryGraph(series: [download, upload], capacity: 60)
+
+            #expect(base == same)
+            #expect(base != reversedOrder)
+            #expect(base != differentCapacity)
+        }
+    }
+
     @Test func ringGaugesWithTheSameReadingCompareEqual() async {
         await MainActor.run {
             let base = RingGauge(fraction: 0.4, color: Palette.cpuAccent, valueText: "40.0%", subtitle: "CPU")

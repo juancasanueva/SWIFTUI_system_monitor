@@ -69,6 +69,31 @@ struct PaletteTests {
         #expect(Palette.diskAccent == Palette.memFree)
     }
 
+    // network-card — NC-10 "Token values"
+    //
+    // Values and the two deliberate sharings: `networkDownload` is the same
+    // colour as `memFree`/`diskAccent` and `networkUpload` the same as
+    // `cpuAccent`/`memCached` — two tokens, one colour, because the network
+    // lines are never adjacent to the memory bar, the disk ring or the CPU
+    // graph. `networkDownload != networkUpload` is the only distinctness
+    // assertion: the two badges must be told apart, and any other pairwise
+    // check would forbid the sharings above.
+    //
+    // `networkAccent` is sampled from the densest globe pixel of
+    // `docs/reference/06-panel-network.png` (0xC659E4).
+    @Test func networkTokensMatchTheProductPalette() {
+        #expect(Palette.networkAccent == Self.sRGB(0xC659E4))
+
+        #expect(Palette.networkDownload == Self.sRGB(0x3DD68C))
+        #expect(Palette.networkDownload == Palette.memFree)
+        #expect(Palette.networkDownload == Palette.diskAccent)
+
+        #expect(Palette.networkUpload == Self.sRGB(0x4D8DFF))
+        #expect(Palette.networkUpload == Palette.cpuAccent)
+
+        #expect(Palette.networkDownload != Palette.networkUpload)
+    }
+
     @Test func surfaceTokensMatchTheProductPalette() {
         #expect(Palette.panelBackground == Self.sRGB(0x0F1522))
         #expect(Palette.cardBackground == Self.sRGB(0x1A2131))

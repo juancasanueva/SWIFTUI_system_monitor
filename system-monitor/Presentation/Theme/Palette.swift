@@ -48,6 +48,21 @@ nonisolated enum Palette {
     /// the memory bar are never adjacent.
     static let diskAccent = sRGB(0x3DD68C)
 
+    /// Network card header glyph. Sampled from the densest pixel of the globe
+    /// in `docs/reference/06-panel-network.png`, which replaced the PRD's
+    /// `0xA66BFF` estimate because every channel deviated by more than `0x10`.
+    static let networkAccent = sRGB(0xC659E4)
+
+    /// Download rate badge and graph line. Shares its value with `memFree` and
+    /// `diskAccent`: two tokens, one colour, because the network graph is never
+    /// adjacent to the memory bar or the disk ring.
+    static let networkDownload = sRGB(0x3DD68C)
+
+    /// Upload rate badge and graph line. Shares its value with `cpuAccent` and
+    /// `memCached`, for the same reason. It only has to differ from
+    /// `networkDownload`, the one line it is drawn beside.
+    static let networkUpload = sRGB(0x4D8DFF)
+
     /// Builds an opaque sRGB colour from a `0xRRGGBB` literal.
     private static func sRGB(_ hex: UInt32) -> Color {
         Color(

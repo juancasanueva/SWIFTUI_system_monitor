@@ -2,6 +2,8 @@
 
 **A lightweight system monitor for the macOS menu bar.** Pure SwiftUI and AppKit, no backend, free.
 
+<p align="center"><img src="docs/images/panel.png" alt="System Monitor panel with the CPU, Memory, Disk and Network cards" width="320"></p>
+
 System Monitor keeps a compact CPU and memory widget in the menu bar, each with a live sparkline and its current percentage. Click it and a dark panel opens with four cards: CPU, Memory, Disk and Network. It reads the same Mach and IOKit counters Activity Monitor reads, and it is built to stay out of the way: under 1% CPU and under 50 MB of memory over a working day is the target.
 
 ## Features

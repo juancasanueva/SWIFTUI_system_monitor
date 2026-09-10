@@ -1,0 +1,61 @@
+schema: gentle-ai.sdd-state/v1
+change: network-module
+milestone: PRD M6 Network (feature F11, section 5.8 R11.x; R2.2, R5.1, R5.2, R5.3; GPU renumbered to M7)
+artifact_store: hybrid
+execution_mode: auto
+delivery_strategy: single-pr
+review_budget_lines: unlimited   # openspec/config.yaml
+strict_tdd: true
+created: 2026-09-10
+status: ARCHIVED
+closed: 2026-09-10
+archived_on: 2026-09-10
+archived_to: openspec/changes/archive/2026-09-10-network-module/
+
+phases:
+  explore: done            # Engram sdd/network-module/explore (8288); mirrored to exploration.md by the propose phase 2026-09-10 (the explore phase could not write project files)
+  research: unselected     # user skipped research 2026-09-10 (SDK header facts are cited in the exploration)
+  propose: done            # proposal.md, Engram sdd/network-module/proposal (8290), 2026-09-10; mockup copied to docs/reference/06-panel-network.png by the orchestrator 2026-09-10 (propose cannot write binaries)
+  spec: done               # Engram sdd/network-module/spec (8291), 2026-09-10; specs/network-metrics/spec.md (NM-1..NM-13), specs/network-card/spec.md (NC-1..NC-13), specs/disk-card/spec.md (delta: MODIFIED DC-1, DC-11)
+  design: done             # design.md, Engram sdd/network-module/design (8292, upserted in place by topic_key), 2026-09-10, attempt 2 after the design gate (NC-13, shared fixture, NET_RT_IFLIST2 citation)
+  tasks: done             # tasks.md, Engram sdd/network-module/tasks (8294), 2026-09-10; 37 tasks in 7 phases, apply batches A–G; forecast 2000–2600 lines, size-exception under single-pr; review workload guard 2026-09-10: user confirmed single PR with size:exception (forecast 2000-2600 lines, same as the previous four modules)
+  apply: done             # automated tasks 32/37 [x] complete 2026-09-10; manual 7.3-7.7 open for the user; fresh-context apply gate PASS on attempt 2. History: batch A (tasks 1.1-1.5) DONE 2026-09-10: 9 new Domain/test files, 651 authored lines, unit target 584 passed / 0 failed (parent spot check NetworkThroughputCalculatorTests re-run passed); ledger nm-batch-a settled complete (revision sha256:d22185e9...); apply-progress.md + Engram 8296. Batch B (tasks 2.1-2.8) DONE 2026-09-10: 7 tracked files modified (593+/12-), unit target 600 passed / 0 failed (parent spot check MetricsSamplerStepTests passed); PlaceholderNetworkProvider in AppDelegate until task 5.1; Engram 8296 upserted. Batch C (tasks 3.1-3.4) DONE 2026-09-10: SysctlNetworkProvider + unit and .integration suites (3 new files; 3.3 contingency skipped, all Darwin names import); sandbox proof: 14 interfaces, bytesIn > 0, no entitlement; FULL 616 / unit 613 passed, 0 failed (parent spot check integration suite passed); first FULL run hit an XCUITest automation-mode timeout with zero failed cases, re-run green. Batch D (tasks 4.1-4.4) DONE 2026-09-10: Palette tokens (networkAccent 0xC659E4 measured from the mockup raw bytes, replacing 0xA66BFF), multi-series HistoryGraph, 1 new test file; unit 622 passed / 0 failed, build 0 warnings (parent spot check passed); note: -only-testing:CanvasComponentsTests is a file name and runs zero cases, the suites are SparklineGeometryTests and CanvasComponentEqualityTests. Batch E (tasks 4.5-4.8) DONE 2026-09-10: NetworkCardModel + NetworkCard + fourth card in PanelView (2 new files); measured four-card panel 1049 pt (370+278+175+166+60 chrome), Network card 166 pt; filled arrow symbols resolved; unit 647 passed / 0 failed, build 0 warnings (parent spot check passed). Batch F (tasks 4.9-4.10) DONE 2026-09-10: PanelLayout (2 new files), PanelView maxHeight/PanelRootView, StatusItemController stored hostingController + show-time cap; cap 921 pt at 945 visible, nil at 1200; MBW-11/13 green; unit 659 passed / 0 failed, build 0 warnings (parent spot check passed). Phases 1-4 complete, 28/37 tasks. Batch G (tasks 5.1, 6.1, 6.2, 7.1, 7.2) DONE 2026-09-10 (first launch cut off by a provider rate limit before any edit, resumed and completed): SysctlNetworkProvider wired in AppDelegate, PRD Draft v4, config F1..F11/M1..M6; FULL 664 passed / 0 failed, unit 661 / 0, build + build-for-testing 0 warnings (parent spot check passed); automated tasks 32/37, manual 7.3-7.7 open for the user; orchestrator fixed three R11.x cross-reference pointers in the specs (NM-12 -> R11.11, NC-8/NC-9 -> R11.8). Fresh-context apply gate 2026-09-10: attempt 1 FAIL (NC-4 text-colour clause vs reused ThroughputLabel, unrecorded); orchestrator amended NC-4 to icon-only tint (mockup 4.6 + DC-7 precedent + decision 7); corrective re-run added NetworkCardModel.readingColors + test, recorded the divergence and the sysctl clamp; unit 662 passed / 0 failed. Gate PASS on attempt 2. size:exception
+  verify: done             # REVISION 2, 2026-09-10 — verify-report.md superseded in place (sha256:534fd45e...c428d99) + Engram sdd/network-module/verify-report (8302, upserted by topic_key). Regenerated because the dispatcher blocked archive on a stale total (75 vs the actual 79 after the two post-verify corrections: +1 NM-4 "Zero-interface baseline yields nil", +3 NM-10/NM-11 IFMIB scenarios). Verdict pass_with_warnings, 0 blockers / 0 critical, requirements 28/28, scenarios 79/79 (3 PARTIAL: NM-10 zero-admitted-interface path is fixture-level, NM-10 sparse-index skip/throw wiring is seam-only, NC-3 tint/.isHeader are static-only). Runs of record: FULL exit 0, 670 passed / 0 failed (evidence_revision sha256:ba5dff0e...fd70d5d9); UNIT exit 0, 667 passed / 0 failed (= the 667 @Test declarations); BUILD exit 0, 0 warnings. Strict TDD audit 8/8 - both corrections have genuine RED-before-GREEN, and correction 1 caught and removed a ghost green (idle and referencePrevious share stamp at: 0, so the window was zero-length). Assertion quality 0/0, NM-13 all 18 PRD/config items present including the corrected R11.1/R11.4/6.3 rows, no NET_RT_IFLIST2 walk left in production (one required doc comment at SysctlNetworkProvider.swift:13), project.pbxproj clean, nothing committed (de40106). Tasks 37/37 - manual 7.3-7.7 confirmed passed by the user; 7.3 peak and 7.7 CPU/resident figures confirmed but not reported. 9 warnings + 5 suggestions, none blocking. Revision 1's W1 (risk half) and W4 are WITHDRAWN: the .integration suites live in the system-monitorTests target, so UNIT runs them all and FULL only adds the 3 XCUITest cases. Report admitted by gentle-ai sdd-verify-validate --requirements 28 --scenarios 79 -> valid true, verdict pass_with_warnings.
+  archive: done             # ARCHIVED 2026-09-10 to openspec/changes/archive/2026-09-10-network-module/. Two NEW capability specs merged as specs of record (network-metrics NM-1..NM-13, 43 scenarios; network-card NC-1..NC-13, 30 scenarios) and the disk-card delta composed into openspec/specs/disk-card/spec.md by gentle-ai sdd-archive-compose (exit 0): MODIFIED DC-1 (card order CPU, Memory, Disk, Network) and MODIFIED DC-11 (four-card height, visible-frame cap owned by network-card NC-12), DC-2..DC-10 preserved byte-identical, 11 requirements kept and scenarios 25 -> 27. No other spec of record touched. Tasks 37/37 (manual 7.3-7.7 confirmed by the user 2026-09-10 on the IFMIB build). Verify revision 2 pass_with_warnings, 0 critical. Nothing committed: HEAD de40106, delivery (commit, push, PR) is user-owned. Archive report: archive-report.md + Engram sdd/network-module/archive-report.
+  # Receipt-driven review 2026-09-10 (lineage review-6998e0189040a8d8, medium, 36 files, 3350 lines): user chose "Run the review now"; reliability lens found CRITICAL R3-zero-interface-baseline (zero-interface reading accepted as delta baseline -> since-boot totals published as a rate spike); one bounded correction (calculator guards previous.interfaceCount > 0, calculator + sampler transition tests, NM-4 and PRD R11.4 amended, ~117 lines under the 200 budget, ledger review-correction settled complete); targeted validation approved; five advisory non-blocking findings recorded in the review closure; exact acknowledgement run (see the acknowledged envelope). unit 664 passed / 0 failed after the correction.
+  # Manual check 7.3 (user, 2026-09-10): during a large download the MB/s readings showed em dashes for a tick and Total In reset to a small value. Root cause reproduced by the orchestrator probe: NET_RT_IFLIST2 if_data64 byte counters wrap at 2^32 on this driver (en1 4 287 352 832 -> 8 851 456 in one tick); IFMIB IFDATA_GENERAL returns the true 64-bit value (13 546 129 547). Correction (ledger correction-ifmib-64bit-counters, budget 400) in progress: adapter switches to per-interface IFMIB reads; NM-10/NM-11, PRD R11.1/6.3, exploration and design notes amended. Correction DONE 2026-09-10: adapter reads ifmibdata per interface (ReadError countQuery/interfaceRead, isMissingInterface seam, Int32(bitPattern:) for ifmd_flags); integration suite 9/9 with an in-test MIB witness (en1 13 563 204 219 bytes), unit 667 passed / 0 failed, build 0 warnings (parent spot check passed); ledger correction-ifmib-64bit-counters settled complete. Manual 7.3 and 7.4 must be re-run on the corrected build; 7.7 matters more (one sysctl per interface per tick). Receipt-driven review #2 2026-09-10 (lineage review-75a9871bf4b6e760, medium, 36 files, 3606 lines): user chose "Run the review now"; reliability lens approved with no correction; four advisory non-blocking findings (R3-all-gaps-become-valid-empty, R3-cap-not-reapplied-while-shown, R3-churn-without-net-fall WARNING, R3-truncation-witness-shares-source); exact acknowledgement burned authority.
+  # Manual checks 7.3-7.7 confirmed passed by the user 2026-09-10 on the IFMIB build (live rates through 4 GB without dash or reset, totals vs Activity Monitor, 14" cap, accent/em-dash/Reduce Motion, Time Profiler under 1%); tasks 37/37.
+
+pre_proposal:
+  status: confirmed
+  asked_on: 2026-09-10
+  confirmed_on: 2026-09-10
+  decisions:
+    colour_mapping: download = green (0x3DD68C), upload = blue (0x4D8DFF) for both badge and graph line
+    totals_semantics: Total In / Total Out are since boot (raw 64-bit interface counter sums)
+    rate_formatting: reuse ByteFormatter.throughput ("5,0 kB/s"); no integer variant
+    interface_filter: IFT_ETHER + IFT_CELLULAR and not IFF_LOOPBACK; excludes lo0, utun*, bridge*, gif, stf; IFF_UP/IFF_RUNNING not required
+    prd_scope: Draft v4 adds F11 Network card, milestone M6 Network, section 5.8; GPU renumbered to M7; F9 (menu bar NET module) stays Future
+    popover_height: panel scrolls when taller than the screen's visibleFrame (four cards ~1050 pt vs ~945 pt usable on 14" at default scaling); in scope
+    rate_text: reuse ThroughputLabel at 12 pt with arrow.down.circle.fill / arrow.up.circle.fill (or the design's SF Symbol pair); no larger badge component
+    research_lane: unselected
+  assumptions_unless_overridden:
+    read_error_cases: design decision
+    graph_floor_and_series_fill: design decision (floor about 10 kB/s recommended)
+    overflow_cap_host_and_margin: design decision (PanelView injected maxHeight vs configurePopover; pure PanelLayout rule unit-tested either way)
+    network_accent_value: sampled from the mockup at implementation (estimate 0xA66BFF), pinned in the palette test
+    sf_symbol_names: design decision, download and upload icons must differ
+    unavailable_caption: design decision
+
+preproposal:
+  schema: gentle-ai.sdd-preproposal/v1
+  revision: 1
+  exploration:
+    outcome: done
+    openspec: openspec/changes/network-module/exploration.md
+    engram: sdd/network-module/explore (observation 8288)
+  research:
+    selected: false
+    outcome: unselected
+  product_decisions: confirmed   # Engram sdd/network-module/pre-proposal (observation 8289)
+  proposal_ready: true

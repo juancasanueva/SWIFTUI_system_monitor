@@ -8,7 +8,8 @@ The Disk detail card inside the popover: header, ring gauge, Used/Free/Total row
 
 ### Requirement: DC-1 Presentational contract and panel placement (Layer: Presentation) — PRD 6.1, R2.2
 
-`DiskCard` MUST accept only a `DiskSnapshot?` and MUST NOT read Mach, IOKit, sysctl or Foundation volume APIs. All derivations (sections, rows, gauge text and fraction, throughput texts, icons, animation) MUST live in a pure `nonisolated enum DiskCardModel` that accepts an injected `Locale`. `PanelView` MUST render `DiskCard(snapshot: state.disk)` third, after `MemoryCard`, inside the existing 12 pt-spaced stack at 320 pt width.
+`DiskCard` MUST accept only a `DiskSnapshot?` and MUST NOT read Mach, IOKit, sysctl or Foundation volume APIs. All derivations (sections, rows, gauge text and fraction, throughput texts, icons, animation) MUST live in a pure `nonisolated enum DiskCardModel` that accepts an injected `Locale`. `PanelView` MUST render `DiskCard(snapshot: state.disk)` third, after `MemoryCard` and before the Network card, inside the existing 12 pt-spaced stack at 320 pt width.
+(Previously: the Disk card was the last card and the panel order ended at Disk.)
 
 #### Scenario: Card renders from a fixed input
 
@@ -20,7 +21,7 @@ The Disk detail card inside the popover: header, ring gauge, Used/Free/Total row
 
 - GIVEN the panel layout
 - WHEN its cards are enumerated
-- THEN the order is CPU, Memory, Disk
+- THEN the order is CPU, Memory, Disk, Network
 
 #### Scenario: Live update while open
 
@@ -192,10 +193,23 @@ With `snapshot == nil` the card MUST render the full skeleton: header, gauge wit
 
 ### Requirement: DC-11 Panel height (Layer: Presentation) — R2.2, PRD 10
 
-`PanelView`'s fitting height MUST be at least the sum of the CPU, Memory and Disk card heights plus chrome; the popover has no fixed content size, so it grows with the third card. Existing lower-bound height assertions MUST stay green.
+`PanelView`'s fitting height MUST be at least the sum of the CPU, Memory, Disk and Network card heights plus chrome, so it grows with the fourth card. The presented panel height MUST be bounded by the visible-frame cap specified in `network-card` NC-12 rather than being unbounded, and content MUST NOT be clipped. Existing lower-bound height assertions MUST stay green.
+(Previously: the height was the three-card sum and the popover had no fixed content size, so it grew without bound.)
 
 #### Scenario: Three-card height
 
 - GIVEN a panel with CPU, memory and disk snapshots applied
 - WHEN its fitting height is measured
 - THEN it is `>= cpu + memory + disk + chrome` and exceeds the two-card height
+
+#### Scenario: Four-card height
+
+- GIVEN a panel with CPU, memory, disk and network snapshots applied
+- WHEN its fitting height is measured
+- THEN it is `>= cpu + memory + disk + network + chrome` and exceeds the three-card height
+
+#### Scenario: Height is bounded by the visible frame
+
+- GIVEN a fitting height that exceeds the presenting screen's visible-frame height minus the design-owned margin
+- WHEN the panel is presented
+- THEN the height is capped per NC-12 and the cards scroll instead of being clipped

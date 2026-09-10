@@ -1,4 +1,4 @@
-<h1 align="center">System Monitor</h1>
+<h1 align="center"><img src="system-monitor/Assets.xcassets/AppIcon.appiconset/icon256.png" width="96" alt="System Monitor icon" align="absmiddle"> System Monitor</h1>
 
 **A lightweight system monitor for the macOS menu bar.** Pure SwiftUI and AppKit, no backend, free.
 

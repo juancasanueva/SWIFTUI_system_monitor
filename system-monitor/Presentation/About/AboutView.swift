@@ -13,6 +13,18 @@ struct AboutView: View {
     /// Fixed content width; the window is sized from it and is not resizable.
     static let width: CGFloat = 340
 
+    /// The app icon from the bundled asset catalog.
+    ///
+    /// Resolved by name rather than through `NSApp.applicationIconImage`: that
+    /// accessor returns the generic application icon whenever Launch Services
+    /// has not registered the running process, which is the case under the
+    /// test runner and can be for other launch paths. The asset catalog is
+    /// always in the main bundle. The generic icon remains the fallback only
+    /// for a bundle that ships without an `AppIcon` set.
+    static var icon: NSImage {
+        NSImage(named: "AppIcon") ?? NSApp.applicationIconImage
+    }
+
     private static let iconSize: CGFloat = 72
     private static let outerPadding: CGFloat = 20
     private static let cardSpacing: CGFloat = 16
@@ -52,7 +64,7 @@ struct AboutView: View {
 
     private var header: some View {
         HStack(alignment: .center, spacing: 16) {
-            Image(nsImage: NSApp.applicationIconImage)
+            Image(nsImage: Self.icon)
                 .resizable()
                 .interpolation(.high)
                 .frame(width: Self.iconSize, height: Self.iconSize)

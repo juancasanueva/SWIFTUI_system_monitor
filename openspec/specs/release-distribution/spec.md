@@ -11,7 +11,7 @@ Every scenario in this file declares exactly one verification class, and no requ
 | Class | Meaning |
 |---|---|
 | `unit` | RED-first assertion in `system-monitorTests`, anchored to `#filePath` so it reads the repository off disk, run by `xcodebuild test … -only-testing:system-monitorTests` |
-| `ci-gate` | a hard gate whose failure fails its job and publishes nothing — the release run in `.github/workflows/release.yml` here, or `ci.yml` / `bump.yml` in `juancasanueva/homebrew-system-monitor` for the cask channel |
+| `ci-gate` | a hard gate whose failure fails its job and publishes nothing — the release run in `.github/workflows/release.yml` here, or `ci.yml` / `bump.yml` in `juancasanueva/homebrew-tap` for the cask channel |
 | `manual-evidence` | no harness can exist — no runner may install into a real `/Applications` or observe a self-updated app — so the maintainer's observed output is recorded verbatim in `RELEASING.md` |
 
 ## Requirements
@@ -415,14 +415,14 @@ The install and uninstall instructions MUST be documented **in this repository**
 - WHEN the tap's CI runs style, offline audit, and online strict audit, then installs the cask and uninstalls it with a zap
 - THEN every gate passes, the online audit confirms the declared checksum against the downloaded published asset, and the round trip completes
 - AND a failing gate leaves nothing committed and nothing published
-- Verification: `ci-gate` — `ci.yml` in `juancasanueva/homebrew-system-monitor`
+- Verification: `ci-gate` — `ci.yml` in `juancasanueva/homebrew-tap`
 
 #### Scenario: Keeping the cask current is idempotent on the declared version
 
 - GIVEN a cask that already declares the latest published stable version
 - WHEN the update mechanism runs again against that unchanged release
 - THEN it exits successfully and produces no commit and no version change
-- Verification: `ci-gate` — `bump.yml` in `juancasanueva/homebrew-system-monitor`
+- Verification: `ci-gate` — `bump.yml` in `juancasanueva/homebrew-tap`
 
 #### Scenario: A self-updated app does not fight `brew upgrade`
 

@@ -324,19 +324,36 @@ installed copy would stop finding updates.
 The second delivery channel. It publishes **no second artifact**: the cask points
 at the same `System-Monitor-<version>.zip` §7 specifies.
 
+The tap is **shared**: `juancasanueva/tap` carries this cask and `home-cellar`
+for [Home Cellar](https://github.com/juancasanueva/SWIFTUI_cellar). One trust
+grant and one `brew upgrade` cover both. Its `ci.yml` installs, verifies and zaps
+both casks on every change, and its `bump.yml` is a serialised matrix with one
+entry per app, so a bump to one cask never rewrites the other.
+
+**`juancasanueva/system-monitor` is now a migration pointer.** That repository
+carries no cask any more — only a `tap_migrations.json` mapping the
+`system-monitor` token to `juancasanueva/tap`. Homebrew honours the mapping on
+`brew upgrade`, but only into a tap the user already has and trusts, so the
+documented path for an existing installation is `brew trust juancasanueva/tap`,
+`brew tap juancasanueva/tap`, `brew upgrade`, then
+`brew untap juancasanueva/system-monitor`. The cask file had to be deleted there:
+`brew audit` errors with "system-monitor is listed in tap_migrations.json" while
+the token is both listed and present in the same tap.
+
 | Thing | Value |
 |---|---|
-| Tap repository | `juancasanueva/homebrew-system-monitor` (public) |
-| Tap name | `juancasanueva/system-monitor` |
+| Tap repository | `juancasanueva/homebrew-tap` (public) |
+| Tap name | `juancasanueva/tap` |
 | Cask token | `system-monitor` |
-| Canonical install | `brew trust juancasanueva/system-monitor`, then `brew tap juancasanueva/system-monitor`, then `brew install --cask system-monitor` |
-| Unambiguous form | `brew install --cask juancasanueva/system-monitor/system-monitor` |
+| Canonical install | `brew trust juancasanueva/tap`, then `brew tap juancasanueva/tap`, then `brew install --cask system-monitor` |
+| Unambiguous form | `brew install --cask juancasanueva/tap/system-monitor` |
 | Installed path | `/Applications/System-Monitor.app` — the same bundle name the zip carries |
 
 **Homebrew 6 requires tap trust, before tapping.** Since 6.0.22 `brew tap`
 itself refuses, and rolls back, a non-official tap that carries a cask until the
-tap is trusted, so `brew trust juancasanueva/system-monitor` comes first. Naming the tap or the
-fully-qualified cask on the command line is itself the grant.
+tap is trusted, so `brew trust juancasanueva/tap` comes first. Naming the tap or the
+fully-qualified cask on the command line is itself the grant. Trust is per tap,
+so the grant on the old tap does not carry over to the new one.
 
 **A direct-download copy blocks a plain install.** A user who dragged the zip
 already has `/Applications/System-Monitor.app` — the same path and the same
@@ -383,9 +400,9 @@ gh release view --repo juancasanueva/SWIFTUI_system_monitor --json tagName --jq 
 curl -fsSLO https://github.com/juancasanueva/SWIFTUI_system_monitor/releases/download/v<version>/System-Monitor-<version>.zip
 shasum -a 256 System-Monitor-<version>.zip
 # edit version and sha256 in Casks/system-monitor.rb, then, from a checkout tapped
-# into $(brew --repository)/Library/Taps/juancasanueva/homebrew-system-monitor:
-brew style juancasanueva/system-monitor
-brew audit --cask --online --strict juancasanueva/system-monitor/system-monitor
+# into $(brew --repository)/Library/Taps/juancasanueva/homebrew-tap:
+brew style juancasanueva/tap
+brew audit --cask --online --strict juancasanueva/tap/system-monitor
 git commit -am "chore(cask): system-monitor <version>" && git push
 ```
 

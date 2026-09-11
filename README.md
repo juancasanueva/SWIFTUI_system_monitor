@@ -29,8 +29,8 @@ System Monitor keeps a compact CPU and memory widget in the menu bar, each with 
 With Homebrew:
 
 ```sh
-brew trust juancasanueva/system-monitor
-brew tap juancasanueva/system-monitor
+brew trust juancasanueva/tap
+brew tap juancasanueva/tap
 brew install --cask system-monitor
 ```
 
@@ -38,7 +38,13 @@ That installs `/Applications/System-Monitor.app`, the same notarized build the
 releases page serves. Homebrew 6 refuses to load, and since 6.0.22 even to tap,
 a third-party tap that carries a cask until the tap is trusted, which is what
 the first line does; it grants nothing beyond this tap. The unambiguous form is
-`brew install --cask juancasanueva/system-monitor/system-monitor`.
+`brew install --cask juancasanueva/tap/system-monitor`.
+
+**Moved from `juancasanueva/system-monitor`.** The cask used to ship from a tap
+of its own; it now lives in `juancasanueva/tap` alongside
+[Home Cellar](https://github.com/juancasanueva/SWIFTUI_cellar). If you installed
+from the old tap, trust and tap the new one, then `brew upgrade` follows the
+migration and `brew untap juancasanueva/system-monitor` retires the old pointer.
 
 **Already have `System-Monitor.app` in `/Applications`?** Homebrew refuses to
 overwrite an app it did not place (`It seems there is already an App at

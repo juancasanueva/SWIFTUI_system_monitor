@@ -73,7 +73,7 @@ A Linux status bar (the source of the visual idea). Layout, left to right:
 CPU [sparkline] 26%   MEM [sparkline] 59%   NET [sparkline] ↓207B ↑232B
 ```
 
-- Each module: **label** (small caps, cyan/teal on dark), **sparkline** (filled area, ~60 px wide), **value** (percentage).
+- Each module: **label** (small caps, cyan/teal on dark), **value** (percentage), **sparkline** (filled area, ~60 px wide).
 - The whole group sits inside a rounded pill with a subtle border.
 - v1 ships the first two modules only. NET is a future module; GPU takes the third slot in v2.
 

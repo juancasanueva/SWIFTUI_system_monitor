@@ -77,7 +77,7 @@ enum StatusItemMetrics {
     /// Height of a module sparkline, in points.
     static let sparklineHeight: CGFloat = 14
 
-    /// Spacing between the label, sparkline and value of one module.
+    /// Spacing between the label, value and sparkline of one module.
     ///
     /// Two 40 pt sparklines, two labels and two `"100%"` value frames occupy
     /// 195 pt on their own, so readable gaps, the hairline and the card insets
@@ -230,7 +230,7 @@ struct StatusItemRootView: View {
     }
 }
 
-/// A module abbreviation, its sparkline and its current value.
+/// A module abbreviation, its current value and its sparkline.
 ///
 /// The label and sparkline carry the module accent; the value uses the system
 /// label colour so it stays legible on dark and light menu bars
@@ -247,6 +247,11 @@ struct ModuleLabel: View, Equatable {
                 .font(StatusItemMetrics.labelFont)
                 .foregroundStyle(reading.module.accent)
 
+            Text(reading.valueText)
+                .font(StatusItemMetrics.valueFont)
+                .foregroundStyle(.primary)
+                .frame(width: StatusItemMetrics.valueWidth, alignment: .trailing)
+
             Sparkline(
                 samples: reading.samples,
                 capacity: StatusItemReadings.sampleCount,
@@ -257,11 +262,6 @@ struct ModuleLabel: View, Equatable {
                 width: StatusItemMetrics.sparklineWidth,
                 height: StatusItemMetrics.sparklineHeight
             )
-
-            Text(reading.valueText)
-                .font(StatusItemMetrics.valueFont)
-                .foregroundStyle(.primary)
-                .frame(width: StatusItemMetrics.valueWidth, alignment: .trailing)
         }
     }
 }

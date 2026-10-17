@@ -86,7 +86,7 @@ jobs:
           esac
 
       - name: Check out the tagged commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # The app's deployment target is macOS 26.5, so the SDK the runner selects
       # by default is not enough: an older Xcode cannot build against it at all.
@@ -156,6 +156,31 @@ jobs:
       - name: Record signing evidence
         run: codesign -dvvv --entitlements :- "build/export/System-Monitor.app" 2>&1
 
+      # The pinned Sparkle tools are downloaded and digest-checked here,
+      # **before** the release exists, for the same reason the feed is fetched
+      # next: a github.com error after Publish would strand a published release
+      # with no feed item. The build step after Publish signs with this
+      # directory and never downloads the tools. The download holds no secret;
+      # the signing key is bound only on the build step.
+      - name: Fetch the Sparkle tools
+        if: ${{ !contains(github.ref_name, '-') }}
+        env:
+          SPARKLE_TOOLS_DIR: ${{ runner.temp }}/sparkle-tools
+        run: scripts/appcast.sh tools
+
+      # The live feed is fetched and validated here, **before** the release
+      # exists, so a Pages or CDN failure stops the run while nothing is public:
+      # re-tagging the same commit is then safe. The build step after Publish
+      # reads this file and never fetches the feed again. It runs last before
+      # Publish, after notarization, so the copy is minutes old at most. The
+      # fetch holds no secret.
+      - name: Fetch the live feed
+        if: ${{ !contains(github.ref_name, '-') }}
+        env:
+          FEED_URL: https://juancasanueva.github.io/SWIFTUI_system_monitor/appcast.xml
+          CURRENT_FEED_FILE: ${{ runner.temp }}/current-appcast.xml
+        run: scripts/appcast.sh fetch
+
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -171,13 +196,15 @@ jobs:
           gh release create "$GITHUB_REF_NAME" "build/System-Monitor-${VERSION}.zip" \
             --verify-tag --generate-notes --title "$GITHUB_REF_NAME" $PRERELEASE
 
-      # Appcast publication. Every step below carries the same prerelease guard
-      # the publish step uses for `--prerelease`: a Pages deploy is a full-site
-      # replacement, so a prerelease reaching it with an empty artifact would
-      # blank the live feed for every installed copy.
+      # Appcast publication. Every step below, like the two fetches above, carries
+      # the same prerelease guard the publish step uses for `--prerelease`: a
+      # Pages deploy is a full-site replacement, so a prerelease reaching it
+      # with an empty artifact would blank the live feed for every installed
+      # copy.
       #
       # They run **after** the release exists, because the item's enclosure
-      # points at the published asset's download URL.
+      # points at the published asset's download URL. The feed they merge into
+      # and the tools they sign with were fetched before Publish, above.
       - name: Build the appcast
         if: ${{ !contains(github.ref_name, '-') }}
         env:
@@ -187,7 +214,10 @@ jobs:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
           ASSET_URL: ${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.ref_name }}/System-Monitor-${{ env.VERSION }}.zip
           ZIP_PATH: build/System-Monitor-${{ env.VERSION }}.zip
-          FEED_URL: https://juancasanueva.github.io/SWIFTUI_system_monitor/appcast.xml
+          # Written by "Fetch the live feed"; read, never re-fetched.
+          CURRENT_FEED_FILE: ${{ runner.temp }}/current-appcast.xml
+          # Written by "Fetch the Sparkle tools"; verified, never re-downloaded.
+          SPARKLE_TOOLS_DIR: ${{ runner.temp }}/sparkle-tools
           # Outside the checkout, so nothing enters the repository tree and
           # there is no new stowaway surface.
           OUTPUT_DIR: ${{ runner.temp }}/site
@@ -195,11 +225,11 @@ jobs:
 
       - name: Configure Pages
         if: ${{ !contains(github.ref_name, '-') }}
-        uses: actions/configure-pages@v6
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
 
       - name: Upload the site artifact
         if: ${{ !contains(github.ref_name, '-') }}
-        uses: actions/upload-pages-artifact@v5
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: ${{ runner.temp }}/site
 
@@ -211,7 +241,7 @@ jobs:
       # guarantees this commit has not deployed before.
       - name: Deploy to Pages
         if: ${{ !contains(github.ref_name, '-') }}
-        uses: actions/deploy-pages@v5
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
 
       - name: Delete the ephemeral keychain and the API key
         if: always()

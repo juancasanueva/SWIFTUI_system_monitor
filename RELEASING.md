@@ -121,7 +121,7 @@ Then watch the run under the repository's Actions tab. The stages, in order:
 |---|---|---|
 | Private-repository gate | Refuses to publish an unreachable asset | The repository is not public |
 | Distinct-commit gate | Asks the Pages deployments API whether this commit has already deployed the feed | This commit has deployed before (stable tags only) |
-| Pin Xcode | Selects `Xcode_26.6.app`, the SDK a macOS 26.5 deployment target needs | The runner image no longer carries it |
+| Pin Xcode | Selects `Xcode_26.6.app`: the Xcode and macOS 26 SDK the project is developed with, whose Swift 6.2 honours its default-MainActor and approachable-concurrency settings (the deployment target stays macOS 15.0) | The runner image no longer carries it |
 | Archive | Release archive stamped with the tag and the run number | Any build failure |
 | Export | Developer ID export, then gates version and architecture | `CFBundleShortVersionString` ≠ the tag, or any slice other than `arm64` |
 | Package | `ditto` into `System-Monitor-<version>.zip` | — |
@@ -528,10 +528,12 @@ Nothing was published; fix, delete the tag, tag again.
 of a `.p12` exported **with its private key**, or `P12_PASSWORD` does not match
 it. Re-export from Keychain Access and re-encode.
 
-**The archive fails on the deployment target.** The app targets macOS 15.0, and
-the SDK that can build it ships with Xcode 26.6. If the runner image drops
-`/Applications/Xcode_26.6.app`, the Pin Xcode step fails immediately — which is
-the right place to fail. Update the pin rather than lowering the target.
+**The Pin Xcode step fails.** The app targets macOS 15.0, but it is built with
+Xcode 26.6 and the macOS 26 SDK, matching local development: the project was
+last upgraded with that Xcode and its build settings rely on Swift 6.2. If the
+runner image drops `/Applications/Xcode_26.6.app`, the Pin Xcode step fails
+immediately — which is the right place to fail. Update the pin to an Xcode the
+project builds with locally rather than changing the build settings.
 
 **Signing failed locally.** `SIGNING_STYLE=manual` needs a *Developer ID
 Application* identity in the login keychain; `security find-identity -v -p

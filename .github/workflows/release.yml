@@ -88,8 +88,11 @@ jobs:
       - name: Check out the tagged commit
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      # The app's deployment target is macOS 26.5, so the SDK the runner selects
-      # by default is not enough: an older Xcode cannot build against it at all.
+      # The release is built with the Xcode the project was created and last
+      # upgraded with (Xcode 26.6, LastUpgradeCheck 2660) and its macOS 26 SDK,
+      # matching local development. The build settings rely on Swift 6.2
+      # (SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor, approachable concurrency),
+      # which only Xcode 26 compilers honour. The deployment target is macOS 15.0.
       - name: Pin Xcode
         run: sudo xcode-select -s /Applications/Xcode_26.6.app
 

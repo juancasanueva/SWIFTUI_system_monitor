@@ -16,7 +16,7 @@ Three files, split by ownership rather than by convenience:
 |---|---|
 | `.github/workflows/release.yml` | The runner, the secrets, the ephemeral keychain, cleanup, and publication — everything that only exists on CI |
 | `scripts/release.sh` | The build sequence: archive → export → package → notarize → staple → verify |
-| `scripts/appcast.sh` | The update feed: fetch, verify the pinned signing tool, sign one zip, merge one item, emit |
+| `scripts/appcast.sh` | The update feed: download and verify the pinned signing tool, fetch the live feed, sign one zip, merge one item, emit |
 
 `scripts/release.sh` is a **rehearsal path, not a publishing path**. It contains
 no version-control and no release-management invocation of any kind, so it can
@@ -128,8 +128,10 @@ Then watch the run under the repository's Actions tab. The stages, in order:
 | Notarize | `notarytool submit --wait` | Apple rejects it; the diagnostic log is printed |
 | Staple | Staples the ticket and repackages | Stapling fails |
 | Verify | Eight gates against the copy extracted from the zip (the `spctl` assessment runs online here; the offline assessment is manual evidence) | Any gate |
+| Fetch the Sparkle tools | `scripts/appcast.sh tools`: downloads the pinned Sparkle 2.9.6 tarball, checks its SHA-256 and extracts it into `$RUNNER_TEMP`, before anything is public (stable tags only) | A download failure after bounded retries, or a digest mismatch |
+| Fetch the live feed | `scripts/appcast.sh fetch`: fetches and validates the live feed into `$RUNNER_TEMP`, before anything is public (stable tags only) | Anything but a usable 200 or a 404, after bounded retries |
 | Publish | `gh release create --verify-tag --generate-notes` | — |
-| Build the appcast | Signs the zip and writes the whole feed to a directory outside the checkout | Signing or emission fails (stable tags only) |
+| Build the appcast | Reads the pre-fetched feed and tools (never downloads either again), signs the zip and writes the whole feed to a directory outside the checkout | The pre-fetched feed or tools are missing, or signing or emission fails (stable tags only) |
 | Configure Pages / Upload | Uploads that directory as the `github-pages` artifact | — |
 | Deploy to Pages | `actions/deploy-pages`, which deploys the artifact under this commit as its build version | The deployment reports a failure state, or its 10 minutes elapse |
 | Cleanup | Deletes the keychain and the API key, always | — |
@@ -155,23 +157,100 @@ body is the discriminator: an empty string means the commit has never deployed
 and the release may proceed; `succeed` means it has, and the run stops there —
 before Apple is asked for a round trip and before a release exists on the tag.
 
-**A failure publishes nothing.** Every gate runs before the publish step, so a
-failed run leaves no release, no asset, and no draft. To retry, delete the
-**tag** and tag again — on the same commit, which is fine here precisely because
+**The live feed is never replaced on a guess.** `scripts/appcast.sh` treats only
+an HTTP 404 as "no feed yet" (the first release) and starts an empty channel. A
+DNS failure, a timeout, a 5xx or any other status, and a 200 whose body is empty
+or has no `</channel>`, all stop the run, so a transient error can never replace
+the live feed with a one-item feed.
+
+**Everything the appcast needs from the network is downloaded before the release
+is published.** "Fetch the Sparkle tools" and "Fetch the live feed" run right
+before Publish, so a github.com, Pages or CDN failure stops the run while nothing
+is public and the tag can simply be re-run or re-tagged. Both go through one
+download helper. Each attempt is bounded (`--connect-timeout 10`, and
+`--max-time 60` for the feed, 300 for the tarball). Transient failures are
+retried, four attempts in all, 5 s, 10 s and 20 s apart: curl exits 6 (DNS), 7
+(connect), 28 (timeout), 35 (TLS handshake), 52, 55 and 56 (dropped connection),
+and HTTP 408, 429 and 5xx. A 200 and a 404 are never retried, and any other 4xx
+is refused at once; for the tarball a 404 is a failure too. The tarball must
+match the pinned SHA-256 before it is extracted. A failed fetch also removes what
+an earlier run left at its destination, so a stale feed or tools directory is
+never read as this run's. The build step after Publish reads both and does not
+touch the network again.
+
+### When a run fails
+
+Where the run stopped decides what is already public. `gh release create` is the
+line.
+
+**Before Publish** (both gates, Pin Xcode, keychain, Archive, Export, Package,
+Notarize, Staple, Verify, signing evidence, Fetch the Sparkle tools, Fetch the
+live feed): nothing was published — no release, no asset, no draft. A transient
+download failure needs no fix: **Re-run failed jobs**. Otherwise fix the cause,
+delete the **tag** and tag again. The same commit is fine here precisely because
 the run never reached the deploy: no deployment exists for that commit yet, so
-the distinct-commit gate still lets it through. Once a run *has* deployed the
-feed, that commit is spent; the next version needs a new commit.
+the distinct-commit gate still lets it through.
 
 ```sh
 git push --delete origin v1.0.0
 git tag -d v1.0.0
 ```
 
-**Never delete or unflag a published release.** The Sparkle appcast points at
-published assets, and unflagging one strands every installed copy that trusted
-it. A bad release is withdrawn by cutting a new patch tag, and the automation is
-structurally incapable of doing anything else: the only release-management
-command in the workflow is `gh release create`.
+**After Publish** (Build the appcast, Configure Pages, Upload, Deploy): none of
+them downloads anything any more, so what fails here is signing (a wrong or
+missing `SPARKLE_PRIVATE_KEY`, a signing-tool output the script refuses),
+emission, or the Pages upload and deployment. The GitHub release and its zip
+**already exist** and are `releases/latest`, but the feed was not updated, so no
+installed copy is offered the version. The Homebrew tap's scheduled bump (§8), or
+anyone browsing the releases page, may already have picked it up. There is no
+step-level retry: **Re-run failed jobs** re-runs the whole job, which stops at
+Publish because the release for that tag already exists. Pick one:
+
+1. **Cut the next patch version (preferred).** Leave the release as it is, fix
+   the cause on a new commit, and tag `v1.0.1` there. Its run publishes `v1.0.1`
+   and a feed that offers it; the stranded `v1.0.0` simply never has a feed
+   item. Nothing already seen is withdrawn.
+2. **Delete the release and re-run, when the cause was outside the repository**
+   (a transient network or Pages failure, the `github-pages` tag rule, a
+   secret). Delete only the release, keep the tag, then **Re-run failed jobs**.
+   The re-run uses the same tag, commit, workflow file and run number (so the
+   same build number), and notarizes again:
+
+   ```sh
+   gh release delete v1.0.0 --repo juancasanueva/SWIFTUI_system_monitor --yes
+   ```
+
+3. **Delete the release and the tag, and re-tag**, when the fix needs a code
+   change but the version must stay `1.0.0`. Delete both, then tag the fixing
+   commit:
+
+   ```sh
+   gh release delete v1.0.0 --repo juancasanueva/SWIFTUI_system_monitor --yes --cleanup-tag
+   git tag -d v1.0.0
+   ```
+
+   The new run has a higher build number and a freshly notarized zip with
+   different bytes. Anyone who already downloaded `1.0.0`, and a cask that
+   already bumped to it, hold a zip whose checksum no longer matches the asset of
+   that name.
+
+Options 2 and 3 carry the same risk: between the first publish and the deletion,
+clients may have seen `v1.0.0`. They are only safe because the feed never
+pointed at it. If the Deploy step itself started and failed, the deployments API
+can report a non-empty status for the commit, and the distinct-commit gate then
+refuses any re-run or re-tag on it: use option 1. Once a run *has* deployed the
+feed, that commit is spent; the next version needs a new commit.
+
+`scripts/appcast.sh` can be run locally (§5) to reproduce an appcast failure and
+inspect the feed it would emit, but it does not deploy. The release job is the
+only path to Pages.
+
+**Never delete or unflag a release the feed points at.** Once a version has a
+feed item, installed copies may already be updating to its asset, and unflagging
+it strands every one of them. A bad release is withdrawn by cutting a new patch
+tag, and the automation is structurally incapable of doing anything else: the
+only release-management command in the workflow is `gh release create`. The
+deletions above are deliberate maintainer actions, run by hand.
 
 A tag containing a hyphen (`v0.0.1-rc.1`) publishes as a **prerelease**, which
 is how the pipeline is rehearsed against the real repository. A prerelease
@@ -237,6 +316,23 @@ ZIP_PATH=build/System-Monitor-1.0.0.zip \
 FEED_URL=https://juancasanueva.github.io/SWIFTUI_system_monitor/appcast.xml \
 OUTPUT_DIR=/tmp/site SPARKLE_PRIVATE_KEY="$(cat ~/offline/sparkle-private.key)" scripts/appcast.sh
 ```
+
+Without `CURRENT_FEED_FILE` the build fetches the feed itself, and without
+`SPARKLE_TOOLS_DIR` it downloads and verifies the Sparkle tools itself, with the
+same timeouts, retries and refusals. To rehearse CI's steps, or only check that
+the downloads work:
+
+```sh
+GITHUB_REF_NAME=v1.0.0 SPARKLE_TOOLS_DIR=/tmp/sparkle-tools scripts/appcast.sh tools
+GITHUB_REF_NAME=v1.0.0 FEED_URL=https://juancasanueva.github.io/SWIFTUI_system_monitor/appcast.xml \
+CURRENT_FEED_FILE=/tmp/current-appcast.xml scripts/appcast.sh fetch
+```
+
+Then pass the same `SPARKLE_TOOLS_DIR` and `CURRENT_FEED_FILE` to the build above
+instead of `FEED_URL`. `tools` only ever replaces a directory it wrote itself (it
+carries a `.pinned-sha256` marker); it refuses any other existing, non-empty
+directory. `FETCH_RETRY_DELAY` (default 5) sets the first retry delay of both
+downloads.
 
 `SIGNING_STYLE` defaults to `manual`, and `scripts/release.sh` refuses to run
 when it disagrees with `signingStyle` in `scripts/ExportOptions.plist` — the two
@@ -452,6 +548,22 @@ deployed the update feed, and Pages will not deploy it twice. Nothing is wrong
 with the tag: put the new version on a new commit and tag that. There is no flag
 to force the deployment, because forcing it is the failure — Pages would accept
 the request, report `succeed`, and keep serving the old feed.
+
+**Fetch the live feed failed.** The live feed answered something other than a
+usable 200 or a 404, or could not be reached, on every attempt. Nothing was
+published: check the feed URL in a browser, then re-run the job or re-tag
+("Before Publish" in §3).
+
+**Fetch the Sparkle tools failed.** The Sparkle 2.9.6 tarball could not be
+downloaded on every attempt, or it did not match the pinned SHA-256. Nothing was
+published. A download failure is usually transient: re-run the job. A digest
+mismatch means the asset on github.com changed; do not update the digest without
+finding out why ("Before Publish" in §3).
+
+**Build the appcast failed.** The feed and the tools were fetched before
+Publish, so this is signing (the `SPARKLE_PRIVATE_KEY` secret), emission, or a
+missing pre-fetched feed or tools directory. The release already exists; follow
+"After Publish" in §3.
 
 **The run is green but the feed still advertises the previous version.** The
 gate makes the stale-feed case unreachable for a stable tag, so the remaining

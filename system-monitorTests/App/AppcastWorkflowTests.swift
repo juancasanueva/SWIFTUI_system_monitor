@@ -348,8 +348,9 @@ struct AppcastWorkflowTests {
     ///
     /// The workflow's blast radius is pinned at exactly one `gh` invocation —
     /// `gh release create` — and no `git` invocation, by
-    /// `theWorkflowInvokesGhOnceAndGitNever`. Reading the deployments API through
-    /// `gh` here would quietly widen it.
+    /// `ReleaseWorkflowContractTests.theWorkflowCanOnlyEverCreateARelease` in
+    /// `ReleasePipelineCompositionTests.swift`. Reading the deployments API
+    /// through `gh` here would quietly widen it.
     @Test("The guard reaches the API with curl and not gh")
     func theGuardReachesTheAPIWithCurlAndNotGh() throws {
         let steps = AppcastWorkflowSources.steps(in: try AppcastWorkflowSources.workflow())
@@ -375,30 +376,6 @@ struct AppcastWorkflowTests {
 
         #expect(upload < deploy)
         #expect(deploy < cleanup)
-    }
-
-    // MARK: - Blast radius
-
-    /// The workflow can only ever *create* a release.
-    ///
-    /// Exactly one `gh` invocation, and it is `gh release create`; no `git`
-    /// invocation at all. Comment lines are skipped, because the workflow
-    /// explains in prose what it never does.
-    @Test("The workflow invokes gh once, to create the release, and git never")
-    func theWorkflowInvokesGhOnceAndGitNever() throws {
-        let code = try AppcastWorkflowSources.workflow()
-            .split(separator: "\n", omittingEmptySubsequences: false)
-            .map(String.init)
-            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("#") }
-
-        let gh = code.filter { AppcastWorkflowSources.invokes("gh", in: $0) }
-        let git = code.filter { AppcastWorkflowSources.invokes("git", in: $0) }
-
-        #expect(gh.count == 1)
-        #expect(gh.first?.contains("gh release create") == true)
-        #expect(git == [])
-        // The reader is only meaningful if it can find an invocation at all.
-        #expect(code.contains { AppcastWorkflowSources.invokes("curl", in: $0) })
     }
 
     // MARK: - Supply chain

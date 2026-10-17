@@ -170,8 +170,8 @@ is public and the tag can simply be re-run or re-tagged. Both go through one
 download helper. Each attempt is bounded (`--connect-timeout 10`, and
 `--max-time 60` for the feed, 300 for the tarball). Transient failures are
 retried, four attempts in all, 5 s, 10 s and 20 s apart: curl exits 6 (DNS), 7
-(connect), 28 (timeout), 35 (TLS handshake), 52, 55 and 56 (dropped connection),
-and HTTP 408, 429 and 5xx. A 200 and a 404 are never retried, and any other 4xx
+(connect), 16 (HTTP/2 framing), 18 (partial transfer), 28 (timeout), 35 (TLS handshake), 52, 55 and 56 (dropped connection), 92 (HTTP/2 stream),
+and HTTP 408, 429 and 5xx. A 200 and a 404 are never retried, and any other 4xx or curl exit
 is refused at once; for the tarball a 404 is a failure too. The tarball must
 match the pinned SHA-256 before it is extracted. A failed fetch also removes what
 an earlier run left at its destination, so a stale feed or tools directory is
@@ -331,7 +331,7 @@ CURRENT_FEED_FILE=/tmp/current-appcast.xml scripts/appcast.sh fetch
 Then pass the same `SPARKLE_TOOLS_DIR` and `CURRENT_FEED_FILE` to the build above
 instead of `FEED_URL`. `tools` only ever replaces a directory it wrote itself (it
 carries a `.pinned-sha256` marker); it refuses any other existing, non-empty
-directory. `FETCH_RETRY_DELAY` (default 5) sets the first retry delay of both
+directory. `FETCH_RETRY_DELAY` (a non-negative integer, default 5; any other value stops the script at once) sets the first retry delay of both
 downloads.
 
 `SIGNING_STYLE` defaults to `manual`, and `scripts/release.sh` refuses to run

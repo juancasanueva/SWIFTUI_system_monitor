@@ -294,6 +294,73 @@ struct AppcastScriptContractTests {
         #expect(run.feed == Data(FeedFetchHarness.liveFeed.utf8))
     }
 
+    /// Every transient class is retried, and the feed that finally answers is
+    /// kept.
+    ///
+    /// One case per curl exit and HTTP status the classifier names as transient,
+    /// so dropping one from `is_transient` fails its own case rather than
+    /// nothing.
+    @Test("Every transient curl exit and HTTP status is retried", arguments: [
+        "exit6", "exit7", "exit16", "exit18", "exit28", "exit35", "exit52", "exit55", "exit56", "exit92",
+        "408", "429", "500", "503"
+    ])
+    func everyTransientClassIsRetried(_ transient: String) throws {
+        let run = try FeedFetchHarness.run(responses: [transient, "200"], body: FeedFetchHarness.liveFeed)
+
+        #expect(run.exitStatus == 0, "\(run.log)")
+        #expect(run.curlCalls.count == 2)
+        #expect(run.feed == Data(FeedFetchHarness.liveFeed.utf8))
+    }
+
+    /// A curl failure the classifier does not name is refused after one attempt.
+    ///
+    /// Exit 3 (malformed URL) and 60 (certificate rejected) will not change on a
+    /// retry; retrying them would only delay the refusal.
+    @Test("A non-transient curl exit is refused after one attempt", arguments: ["exit3", "exit60"])
+    func aNonTransientCurlExitIsNotRetried(_ failure: String) throws {
+        let run = try FeedFetchHarness.run(
+            responses: [failure, "200"],
+            body: FeedFetchHarness.liveFeed,
+            preexistingFeed: FeedFetchHarness.liveFeed
+        )
+
+        #expect(run.exitStatus != 0, "\(run.log)")
+        #expect(run.curlCalls.count == 1)
+        #expect(run.feed == nil)
+    }
+
+    /// A retry delay that is not a whole number of seconds stops the run at
+    /// once, before any download, and names the variable.
+    ///
+    /// Left unchecked it would only surface inside the retry path, after a
+    /// failed attempt, as an arithmetic error from the shell.
+    @Test("A malformed FETCH_RETRY_DELAY fails before any download", arguments: ["abc", "-1", "1.5", "5s"])
+    func aMalformedRetryDelayFailsImmediately(_ delay: String) throws {
+        let run = try FeedFetchHarness.run(
+            responses: ["503", "200"],
+            body: FeedFetchHarness.liveFeed,
+            environment: ["FETCH_RETRY_DELAY": delay]
+        )
+
+        #expect(run.exitStatus != 0, "\(run.log)")
+        #expect(run.curlCalls.isEmpty)
+        #expect(run.log.contains("FETCH_RETRY_DELAY"), "\(run.log)")
+        #expect(run.log.contains("non-negative integer"), "\(run.log)")
+    }
+
+    /// An unknown mode is refused with a usage line naming every accepted mode.
+    @Test("An unknown mode prints a usage line naming every mode")
+    func anUnknownModePrintsTheFullUsage() throws {
+        let run = try FeedFetchHarness.run(mode: "publish", responses: ["200"])
+
+        #expect(run.exitStatus == 2, "\(run.log)")
+        #expect(run.curlCalls.isEmpty)
+        for mode in ["tools", "fetch", "build"] {
+            #expect(run.log.contains(mode), "the usage line must name \(mode): \(run.log)")
+        }
+        #expect(run.log.contains("no argument means build"), "\(run.log)")
+    }
+
     /// Every feed attempt is bounded in time and reads the status code itself.
     ///
     /// `-f` is refused because it folds a 404 and a 503 into one exit status, and
@@ -323,6 +390,11 @@ struct AppcastScriptContractTests {
     }
 
     /// A prerelease tag downloads nothing and writes nothing, in every mode.
+    ///
+    /// Each mode is checked against the destination it would otherwise write:
+    /// `fetch` the feed file, `tools` the tools directory, the build the appcast
+    /// and its output directory. The harness reports each one by existence on
+    /// disk whatever the mode, so an absence here is observed, not assumed.
     @Test("A prerelease tag fetches and writes nothing", arguments: ["fetch", "tools", "build"])
     func aPrereleaseTagFetchesNothing(_ mode: String) throws {
         let run = try FeedFetchHarness.run(
@@ -334,8 +406,9 @@ struct AppcastScriptContractTests {
 
         #expect(run.exitStatus == 0, "\(run.log)")
         #expect(run.curlCalls.isEmpty)
-        #expect(run.feed == nil)
-        #expect(!run.toolsInstalled)
+        #expect(!run.feedFileExists, "a prerelease must not write CURRENT_FEED_FILE")
+        #expect(!run.toolsDirectoryExists, "a prerelease must not create SPARKLE_TOOLS_DIR")
+        #expect(!run.outputDirectoryExists, "a prerelease must not create OUTPUT_DIR")
         #expect(run.appcast == nil)
     }
 
@@ -541,7 +614,8 @@ nonisolated struct FeedFetchFailure: Sendable, CustomTestStringConvertible {
 /// server cannot produce on demand — is deterministic inside `xcodebuild test`.
 /// The stub answers the n-th call with the n-th response (the last one repeats),
 /// and records each call's arguments one per line. A response is an HTTP status
-/// or `exit<N>`, a curl failure with exit status N.
+/// or `exit<N>`, a curl failure with exit status N. `environment` overrides any
+/// variable the harness sets, `FETCH_RETRY_DELAY` included.
 ///
 /// **The pinned digest.** A fake tarball can never match the real Sparkle
 /// digest, and the production script must not read its digest from anywhere a
@@ -556,8 +630,14 @@ nonisolated enum FeedFetchHarness {
     struct Run {
         let exitStatus: Int32
         let feed: Data?
+        /// Whether `CURRENT_FEED_FILE` exists after the run, whatever the mode.
+        let feedFileExists: Bool
         let toolsInstalled: Bool
+        /// Whether `SPARKLE_TOOLS_DIR` exists after the run, whatever the mode.
+        let toolsDirectoryExists: Bool
         let appcast: String?
+        /// Whether `OUTPUT_DIR` exists after the run, whatever the mode.
+        let outputDirectoryExists: Bool
         let foreignFileSurvived: Bool
         let curlCalls: [[String]]
         let log: String
@@ -672,7 +752,8 @@ nonisolated enum FeedFetchHarness {
         pinnedDigest: String? = nil,
         setToolsDirectory: Bool = true,
         seedTools: Bool = false,
-        foreignToolsDirectory: Bool = false
+        foreignToolsDirectory: Bool = false,
+        environment overrides: [String: String] = [:]
     ) throws -> Run {
         let fileManager = FileManager.default
         let dir = fileManager.temporaryDirectory.appendingPathComponent("feed-fetch-\(UUID().uuidString)")
@@ -733,6 +814,7 @@ nonisolated enum FeedFetchHarness {
             "SPARKLE_PRIVATE_KEY": "not-a-key"
         ]
         if setToolsDirectory { environment["SPARKLE_TOOLS_DIR"] = toolsDir.path }
+        environment.merge(overrides) { _, override in override }
         process.environment = environment
         let pipe = Pipe()
         process.standardOutput = pipe
@@ -746,8 +828,11 @@ nonisolated enum FeedFetchHarness {
         return Run(
             exitStatus: process.terminationStatus,
             feed: mode == "fetch" ? try? Data(contentsOf: feedFile) : nil,
+            feedFileExists: fileManager.fileExists(atPath: feedFile.path),
             toolsInstalled: fileManager.isExecutableFile(atPath: signUpdate),
+            toolsDirectoryExists: fileManager.fileExists(atPath: toolsDir.path),
             appcast: try? String(contentsOf: dir.appendingPathComponent("site/appcast.xml"), encoding: .utf8),
+            outputDirectoryExists: fileManager.fileExists(atPath: dir.appendingPathComponent("site").path),
             foreignFileSurvived: fileManager.fileExists(atPath: foreignFile.path),
             curlCalls: calls.split(separator: "\n").map { line in
                 line.split(separator: "\u{1F}", omittingEmptySubsequences: false).dropLast().map(String.init)

@@ -13,7 +13,7 @@
 # It never traces itself. Command tracing would echo the signing pipeline into
 # the job log, and the signing pipeline is where the private key is.
 #
-# Three modes, chosen by the first argument:
+# Three modes, chosen by the first argument (none means build):
 #   scripts/appcast.sh tools   download the pinned Sparkle tarball, check its
 #                              digest and extract it into SPARKLE_TOOLS_DIR, then
 #                              stop.
@@ -43,8 +43,9 @@
 #                        build; optional for the build
 #   SPARKLE_TOOLS_DIR    the pre-fetched, verified Sparkle tools: written by
 #                        `tools`, read by the build; optional for the build
-#   FETCH_RETRY_DELAY    seconds before the first retry of any download
-#                        (default 5); the delay doubles on each later one
+#   FETCH_RETRY_DELAY    seconds before the first retry of any download, a
+#                        non-negative integer (default 5); the delay doubles on
+#                        each later one
 #   OUTPUT_DIR           where appcast.xml is written; never the repository tree
 #   SPARKLE_PRIVATE_KEY  the EdDSA private key, read on **stdin only**
 #
@@ -57,10 +58,23 @@ MODE="${1:-build}"
 case "$MODE" in
 	tools | fetch | build) ;;
 	*)
-		echo "usage: scripts/appcast.sh [tools | fetch]" >&2
+		echo "usage: scripts/appcast.sh [tools | fetch | build] (no argument means build)" >&2
 		exit 2
 		;;
 esac
+
+# Checked here, before anything runs, so a bad value stops the script at once
+# with a message naming it, rather than surfacing after a failed download as an
+# arithmetic error inside the retry loop. `10#` drops leading zeros, which shell
+# arithmetic would otherwise read as octal.
+FETCH_RETRY_DELAY="${FETCH_RETRY_DELAY:-5}"
+case "$FETCH_RETRY_DELAY" in
+	*[!0-9]*)
+		echo "FETCH_RETRY_DELAY must be a non-negative integer number of seconds, got '$FETCH_RETRY_DELAY'" >&2
+		exit 2
+		;;
+esac
+FETCH_RETRY_DELAY=$((10#$FETCH_RETRY_DELAY))
 
 # --- guard -------------------------------------------------------------------
 # The same literal the workflow uses for `--prerelease`, restated here so a hand
@@ -115,12 +129,12 @@ MINIMUM_SYSTEM_VERSION="15.0"
 # curl's own `--retry`: that flag retries timeouts and 408/429/5xx, but not a
 # DNS failure or a dropped connection, and its `--retry-all-errors` widening
 # would retry a 404 too. Here a retry happens only for curl exits 6 (DNS), 7
-# (connect), 28 (timeout), 35 (TLS handshake), 52 (empty reply), 55/56
-# (send/receive) and for HTTP 408, 429 and 5xx. A 200 and a 404 are answers,
-# never retried; any other 4xx is refused at once. Four attempts, 5 s, 10 s and
-# 20 s apart.
+# (connect), 16 (HTTP/2 framing), 18 (partial transfer), 28 (timeout), 35 (TLS
+# handshake), 52 (empty reply), 55/56 (send/receive) and 92 (HTTP/2 stream), and
+# for HTTP 408, 429 and 5xx. A 200 and a 404 are answers, never retried; any
+# other 4xx, and any other curl exit, is refused at once. Four attempts, 5 s,
+# 10 s and 20 s apart by default (FETCH_RETRY_DELAY, validated at the top).
 FETCH_ATTEMPTS=4
-FETCH_RETRY_DELAY="${FETCH_RETRY_DELAY:-5}"
 
 WORK="$(mktemp -d)"
 STAGED=""
@@ -149,7 +163,7 @@ require_feed() {
 is_transient() {
 	local curl_exit="$1" status="$2"
 	case "$curl_exit" in
-		6 | 7 | 28 | 35 | 52 | 55 | 56) return 0 ;;
+		6 | 7 | 16 | 18 | 28 | 35 | 52 | 55 | 56 | 92) return 0 ;;
 		0) ;;
 		*) return 1 ;;
 	esac

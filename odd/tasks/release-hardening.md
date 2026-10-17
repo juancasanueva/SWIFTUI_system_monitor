@@ -46,7 +46,7 @@ single-pr with `size:exception` if over budget (user preference for these ports)
   - GREEN: TEST SUCCEEDED (955 passing test-case lines); `bash -n scripts/*.sh` ok, `shellcheck scripts/*.sh` clean, `actionlint .github/workflows/release.yml` clean.
   - ReleasePipelineCompositionTests needed no change: it still sees exactly one `gh release create`, no `git`, seven secrets, and one keychain cleanup step.
 
-- T2 done.
+- T2 done (commits `e68f55d` fix(release): retry partial and HTTP/2 transfer errors, `ed64e79` test(release): drop the duplicated blast-radius test, `410609e` docs(release): explain the Xcode 26.6 pin accurately).
   - RED: with only the new tests, `xcodebuild ... -only-testing:system-monitorTests/AppcastScriptContractTests test` gave TEST FAILED: 3 cases of `everyTransientClassIsRetried` (curl exits 16, 18, 92), every case of `aMalformedRetryDelayFailsImmediately`, and `anUnknownModePrintsTheFullUsage`. The other transient cases (6, 7, 28, 35, 52, 55, 56, 408, 429, 5xx) and the non-transient cases (3, 60) already passed.
   - GREEN: `xcodebuild ... -only-testing:system-monitorTests test` TEST SUCCEEDED; `bash -n`, `shellcheck scripts/*.sh`, `actionlint .github/workflows/release.yml` clean.
   - Xcode 26.6: the project was created and last upgraded with Xcode 26.6 (`LastUpgradeCheck = 2660`, `CreatedOnToolsVersion = 26.6`) and sets `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` and `SWIFT_APPROACHABLE_CONCURRENCY = YES` (Swift 6.2, Xcode 26). No `#available(macOS 26…)` gates exist. `MACOSX_DEPLOYMENT_TARGET = 15.0`.

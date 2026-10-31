@@ -254,6 +254,15 @@ struct StatusItemControllerTests {
         #expect(Palette.memAccent == Self.sRGB(0xF5A623))
     }
 
+    // menu-bar-widget — MBW-16 "Label colours on the dark card": the widget paints
+    // its own dark card, so the system label colours must resolve for dark even
+    // when the menu bar around it is light.
+    @Test func theWidgetIsPinnedToTheDarkAppearance() async {
+        let name = await Self.withController { $0.widgetAppearanceName?.rawValue }
+
+        #expect(name == NSAppearance.Name.darkAqua.rawValue)
+    }
+
     // MARK: - Visible-frame cap (network-card NC-12)
 
     // network-card — "Taller than the visible frame".

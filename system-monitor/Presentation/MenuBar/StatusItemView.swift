@@ -155,8 +155,11 @@ struct StatusItemContent: View, Equatable {
         }
         .padding(.horizontal, StatusItemMetrics.horizontalPadding)
         .padding(.vertical, StatusItemMetrics.verticalPadding)
+        // An opaque token rather than a hierarchical style: `.quaternary` is a
+        // translucent tint of the menu bar's label colour, so its result depends
+        // on the menu bar and the wallpaper behind it (MBW-16).
         .background(
-            .quaternary,
+            Palette.panelBackground,
             in: RoundedRectangle(
                 cornerRadius: StatusItemMetrics.cardCornerRadius,
                 style: .continuous
@@ -167,7 +170,7 @@ struct StatusItemContent: View, Equatable {
 }
 
 /// Hairline between two modules, in the secondary label colour so it stays
-/// visible on dark and light menu bars without competing with the accents.
+/// visible on the dark card without competing with the accents.
 private struct ModuleSeparator: View {
 
     var body: some View {
@@ -233,10 +236,10 @@ struct StatusItemRootView: View {
 /// A module abbreviation, its current value and its sparkline.
 ///
 /// The label and sparkline carry the module accent; the value uses the system
-/// label colour so it stays legible on dark and light menu bars
-/// (menu-bar-widget "Legibility"). `Equatable` and internal rather than
-/// private, so MBW-14 pins the redraw-gating contract directly on the unit
-/// SwiftUI skips.
+/// label colour, which the pinned dark appearance resolves for the dark card on
+/// any menu bar (menu-bar-widget "Legibility", MBW-16). `Equatable` and internal
+/// rather than private, so MBW-14 pins the redraw-gating contract directly on
+/// the unit SwiftUI skips.
 struct ModuleLabel: View, Equatable {
 
     let reading: ModuleReading

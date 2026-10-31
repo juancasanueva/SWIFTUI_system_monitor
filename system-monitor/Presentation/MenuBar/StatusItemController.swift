@@ -128,6 +128,11 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     private func configureButton() {
         guard let button = statusItem.button else { return }
 
+        // `StatusItemContent` paints a dark card unconditionally, so the system
+        // label colours inside it must resolve for dark under any menu bar
+        // appearance (MBW-16).
+        hostingView.appearance = NSAppearance(named: .darkAqua)
+
         hostingView.translatesAutoresizingMaskIntoConstraints = false
         button.addSubview(hostingView)
         NSLayoutConstraint.activate([
@@ -290,6 +295,12 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     /// (MBW-11).
     var popoverAppearanceName: NSAppearance.Name? {
         popover.appearance?.name
+    }
+
+    /// Appearance pinned on the widget, or `nil` when it follows the menu bar
+    /// (MBW-16).
+    var widgetAppearanceName: NSAppearance.Name? {
+        hostingView.appearance?.name
     }
 
     /// Whether the detail panel is on screen (MBW-13).

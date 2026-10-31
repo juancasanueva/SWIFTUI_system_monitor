@@ -658,3 +658,42 @@ struct StatusItemMetricsTests {
         #expect(fullWidth < 250)
     }
 }
+
+// menu-bar-widget — MBW-16 "Dark card on a light menu bar"
+@Suite("Status item card")
+@MainActor
+struct StatusItemCardTests {
+
+    /// Colour of the pixel at (`x`, `y`) of `view`, rendered through the same
+    /// pipeline for every caller so two results compare without colour drift.
+    private static func pixel(
+        of view: some View,
+        x: (Int) -> Int,
+        y: Int
+    ) throws -> NSColor {
+        let image = try #require(ImageRenderer(content: view).cgImage)
+        let bitmap = NSBitmapImageRep(cgImage: image)
+        let pixel = try #require(bitmap.colorAt(x: x(bitmap.pixelsWide), y: y))
+        return try #require(pixel.usingColorSpace(.sRGB))
+    }
+
+    @Test(arguments: [ColorScheme.light, ColorScheme.dark])
+    func theCardIsOpaqueAndDarkUnderAnyAppearance(scheme: ColorScheme) throws {
+        let content = StatusItemContent(
+            readings: StatusItemMetrics.measurementReadings(for: MetricModule.menuBarOrder)
+        )
+        .environment(\.colorScheme, scheme)
+        let token = Rectangle()
+            .fill(Palette.panelBackground)
+            .frame(width: 8, height: 8)
+
+        // The vertical padding keeps this row clear of the labels and sparklines.
+        let card = try Self.pixel(of: content, x: { $0 / 2 }, y: 1)
+        let expected = try Self.pixel(of: token, x: { $0 / 2 }, y: 1)
+
+        #expect(card.alphaComponent == 1)
+        #expect(abs(card.redComponent - expected.redComponent) < 0.005)
+        #expect(abs(card.greenComponent - expected.greenComponent) < 0.005)
+        #expect(abs(card.blueComponent - expected.blueComponent) < 0.005)
+    }
+}

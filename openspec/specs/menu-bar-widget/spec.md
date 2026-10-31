@@ -131,7 +131,7 @@ The widget MUST reflect the latest published snapshot at each sampling interval.
 
 ### Requirement: Legibility (Layer: Presentation) — R1.6
 
-The value MUST use the system label color; the module label and sparkline MUST use the module accent color, on both dark and light menu bars.
+The value MUST use the system label color; the module label and sparkline MUST use the module accent color, on both dark and light menu bars. Legibility on either menu bar comes from the widget's own dark card (MBW-16).
 
 #### Scenario: Accent from module
 
@@ -294,3 +294,19 @@ ID MBW-14. `StatusItemContent` and each module label MUST be `Equatable` so that
 - GIVEN two contents that differ only in the CPU value text
 - WHEN compared
 - THEN they are not equal
+
+### Requirement: Dark widget card
+
+ID MBW-16. The widget MUST render on an opaque card filled with `Palette.panelBackground`, and its hosting view MUST use the `darkAqua` appearance, regardless of the system appearance, the menu bar appearance or the wallpaper. No palette token changes for this requirement. Serves PRD R1.6.
+
+#### Scenario: Dark card on a light menu bar
+
+- GIVEN the status item content rendered under a light color scheme
+- WHEN the card behind the modules is inspected
+- THEN it is opaque and matches `Palette.panelBackground`
+
+#### Scenario: Label colours on the dark card
+
+- GIVEN a controller is initialised
+- WHEN the widget's hosting view appearance is inspected
+- THEN its name is `darkAqua`

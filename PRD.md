@@ -121,7 +121,7 @@ Kept for v2. Described in section 11.
 - R1.3 Sparkline shows the last 60 samples. At a 1 s interval that is one minute of history.
 - R1.4 Value is an integer percentage (`26%`). Width is fixed-digit so the bar does not jitter as values change.
 - R1.5 Left click toggles the detail panel. Right click opens a context menu with Settings, Launch at Login, Quit.
-- R1.6 The widget must render legibly on both dark and light menu bars. Sparkline uses the module accent color; text uses the system label color.
+- R1.6 The widget must render legibly on both dark and light menu bars, on its own opaque dark card. Sparkline uses the module accent color; text uses the system label color, resolved for the dark appearance.
 - R1.7 Total widget width target: under 230 pt for two modules (raised from 200 pt on 2026-09-04: two 40 pt sparklines plus labels and a "100%" value frame need 221 pt with normal spacing) so it fits alongside other status items on a 14" display.
 
 ### 5.2 Detail panel (F2)

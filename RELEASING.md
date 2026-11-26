@@ -196,13 +196,52 @@ git push --delete origin v1.0.0
 git tag -d v1.0.0
 ```
 
-**Only the `deploy-feed` job failed** (Deploy to Pages): the release and the
-site artifact exist, and the feed is the one step missing. Use **Re-run failed
-jobs**: it re-runs only `deploy-feed`, against the artifact the release job
-uploaded, and needs no release deletion. Do that within a day, while the
-artifact is kept, and only if no later tag has run since: the artifact is the
-feed as this release built it, so deploying it after a newer one would drop the
-newer item. Otherwise cut the next patch (option 1 below).
+**Only the `deploy-feed` job failed** (Deploy to Pages): the release, its zip
+and the site artifact exist, and the feed is the one step missing. **Never
+delete the release here.** The artifact's newest item points at that release's
+asset, so deleting it and then re-running `deploy-feed` publishes a feed whose
+newest item is a dead link. Options 1–3 below are for failures inside the
+release job; the only one that applies here is option 1.
+
+Whether `deploy-feed` may be re-run depends on whether the failed deploy created
+a Pages deployment for the commit. Check that first, with the tag's commit
+(`git rev-parse v1.0.0^{commit}`):
+
+```sh
+gh api repos/juancasanueva/SWIFTUI_system_monitor/pages/deployments/<commit-sha> -q .status
+```
+
+- **Empty output:** no deployment is registered for the commit; the deploy
+  failed before it reached Pages. That is what the check returned after the
+  first v1.0.4 run failed with "No artifacts named "github-pages" were found".
+  Use **Re-run failed jobs**: it re-runs only `deploy-feed`, against the artifact
+  the release job uploaded.
+- **Any other output:** a deployment was created for the commit, whatever its
+  state. Do not re-run; cut the next patch (option 1 below). For a commit that
+  has already deployed successfully, Pages accepts a second deployment, reports
+  `succeed` and keeps serving the old site; what it does with a second
+  deployment of a commit whose first one failed has not been observed. Either
+  way the distinct-commit gate runs in the release job, and a re-run of
+  `deploy-feed` never passes through it.
+
+Before re-running, also confirm that the live feed lists no version newer than
+this run's tag:
+
+```sh
+curl -fsS https://juancasanueva.github.io/SWIFTUI_system_monitor/appcast.xml | grep sparkle:shortVersionString
+```
+
+The artifact is the feed as this release built it, so deploying it after a newer
+release has deployed replaces the live feed with an older one and drops the
+newer item. If a newer version is listed, do not re-run: this release simply
+never gets a feed item, as under option 1. Never re-run `deploy-feed` of an
+older run. The workflow does not enforce this; the check above is the only
+guard.
+
+Re-run within a day. `actions/upload-pages-artifact` keeps the artifact for one
+day by default (`retention-days` defaults to `"1"` in its `action.yml` at the
+pinned v5.0.0, `fc324d3`), and `release.yml` does not override it. Once the
+artifact has expired there is nothing to deploy: cut the next patch.
 
 **After Publish, in the release job** (Build the appcast, Configure Pages,
 Upload): none of them downloads anything any more, so what fails here is signing
@@ -214,16 +253,19 @@ anyone browsing the releases page, may already have picked it up. There is no
 step-level retry: **Re-run failed jobs** re-runs the whole release job, which
 stops at Publish because the release for that tag already exists. Never **Re-run
 all jobs** once the site was uploaded: a second `github-pages` artifact in the
-run makes the deploy fail. Pick one:
+run makes the deploy fail. `deploy-feed` never started, so no deployment exists
+for the commit. A missing `github-pages` tag rule is not a cause here: both jobs
+target that environment, so GitHub refuses the release job before it starts
+(§2, prerequisite 6), before anything is published. Pick one:
 
 1. **Cut the next patch version (preferred).** Leave the release as it is, fix
    the cause on a new commit, and tag `v1.0.1` there. Its run publishes `v1.0.1`
    and a feed that offers it; the stranded `v1.0.0` simply never has a feed
    item. Nothing already seen is withdrawn.
 2. **Delete the release and re-run, when the cause was outside the repository**
-   (a transient network or Pages failure, the `github-pages` tag rule, a
-   secret). Delete only the release, keep the tag, then **Re-run failed jobs**,
-   which runs the release job and then `deploy-feed`. The re-run uses the same
+   (a transient GitHub failure in Configure Pages or Upload, a secret). Delete
+   only the release, keep the tag, then **Re-run failed jobs**, which runs the
+   failed release job and then `deploy-feed`. The re-run uses the same
    tag, commit, workflow file and run number (so the same build number), and
    notarizes again:
 
@@ -247,19 +289,21 @@ run makes the deploy fail. Pick one:
 
 Options 2 and 3 carry the same risk: between the first publish and the deletion,
 clients may have seen `v1.0.0`. They are only safe because the feed never
-pointed at it. If the deploy itself started and failed, the deployments API can
-report a non-empty status for the commit, and the distinct-commit gate then
-refuses any re-run of the release job or re-tag on it: re-run `deploy-feed`
-alone, as above, or use option 1. Once a run *has* deployed the feed, that
-commit is spent; the next version needs a new commit.
+pointed at it, and they are only open because `deploy-feed` never ran, so the
+distinct-commit gate still lets the release job through. The gate refuses any
+non-empty deployment status, so once a deployment exists for a commit, whatever
+its state, no re-run of the release job and no re-tag on that commit gets past
+it. Once a run *has* deployed the feed, that commit is spent; the next version
+needs a new commit.
 
 The deploy used to be the last step of the release job, where it could look
 the site artifact up before GitHub listed it and fail with "No artifacts named
 "github-pages" were found" (actions/deploy-pages#451). Re-running that job
 uploaded a second artifact to the run, and the deploy then refused both
 ("Multiple artifacts named "github-pages" were unexpectedly found"). v1.0.4 was
-published that way without reaching the feed, which is why the deploy is now its
-own job. A run started before this change re-runs the workflow file it started
+first published that way, from `c94bef0`, without reaching the feed, which is
+why the deploy is now its own job. Its release and tag were then deleted and
+`v1.0.4` was re-tagged on `8edb7c1` (option 3); that run deployed the feed. A run started before this change re-runs the workflow file it started
 with, so re-running it does not pick up the new job: cut the next patch instead.
 
 `scripts/appcast.sh` can be run locally (§5) to reproduce an appcast failure and

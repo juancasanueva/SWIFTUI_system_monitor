@@ -11,7 +11,7 @@ System Monitor keeps a compact CPU and memory widget in the menu bar, each with 
 - **Menu bar widget.** CPU and MEM side by side on a rounded card, each with a 60-sample sparkline and an integer percentage. The widget has a fixed width, so values changing every second never make the menu bar jitter.
 - **CPU card.** Ring gauge of total load, User and System split, Performance-core and Efficiency-core averages, a history graph, and one bar per core grouped into P-cores and E-cores.
 - **Memory card.** Ring gauge of used memory, Used, Total, Wired and Compressed values, a stacked bar of App, Wired, Compressed, Cached and Free with a legend, and a history graph. The numbers follow Activity Monitor's formula.
-- **Disk card.** Ring gauge of how full the boot volume is, Used, Free and Total, and live read and write throughput.
+- **Disk card.** Ring gauge of how full the boot volume is, Used, Free and Total, and live read and write throughput. A refresh button in the card header re-reads the volume capacity immediately instead of waiting for the next periodic read.
 - **Network card.** Live download and upload rates, bytes received and sent since boot, and a dual-line history graph of both rates.
 - **Settings.** Sampling interval from 0.5 s to 5 s, which modules appear in the menu bar, and their order. The sampler drops to a 2 s idle cadence while the panel is closed.
 - **Launch at Login.** One toggle in the right-click menu, backed by the system login items service.

@@ -1515,6 +1515,78 @@ struct MetricsSamplerLoopTests {
         await sampler.stop()
     }
 
+    // MARK: - Manual disk refresh
+
+    /// A capacity distinguishable from `DiskFixtures.referenceCapacity`, so a
+    /// refreshed reading cannot be mistaken for the cached one.
+    private var refreshedCapacity: VolumeCapacity {
+        VolumeCapacity(total: 494_354_000_000, free: 40_000_000_000)
+    }
+
+    // Manual "Refresh Disk": the restart reuses DM-8, so the fresh loop's first
+    // iteration re-reads capacity immediately instead of waiting out the 10 s
+    // capacity cadence, and the interval is left exactly as it was.
+    @Test func refreshingTheDiskReReadsCapacityImmediately() async throws {
+        let state = await MetricsState()
+        let provider = FakeCPUProvider(samples: climbingSamples())
+        let diskProvider = FakeDiskProvider(
+            throughput: DiskFixtures.climbing(),
+            capacities: [DiskFixtures.referenceCapacity, refreshedCapacity]
+        )
+        let clock = ManualClock()
+        let sampler = await makeSampler(
+            state: state,
+            provider: provider,
+            diskProvider: diskProvider,
+            interval: .seconds(1),
+            clock: clock
+        )
+
+        await sampler.start()
+        await clock.awaitSleepCount(1)
+
+        #expect(try #require(await state.disk).free == DiskFixtures.referenceCapacity.free)
+        #expect(diskProvider.capacityCallCount == 1)
+
+        await sampler.refreshDisk()
+        await clock.awaitSleepCount(2)
+
+        #expect(try #require(await state.disk).free == refreshedCapacity.free)
+        #expect(diskProvider.capacityCallCount == 2)
+        #expect(clock.now.offset < .seconds(10))
+        #expect(await sampler.interval == .seconds(1))
+        #expect(await sampler.isRunning)
+
+        await sampler.stop()
+    }
+
+    // A stopped sampler stays stopped: refreshing must not start the loop or
+    // read the disk behind the user's back.
+    @Test func refreshingAStoppedSamplerDoesNothing() async {
+        let state = await MetricsState()
+        let provider = FakeCPUProvider(samples: climbingSamples())
+        let diskProvider = FakeDiskProvider(
+            throughput: DiskFixtures.climbing(),
+            capacities: [DiskFixtures.referenceCapacity, refreshedCapacity]
+        )
+        let clock = ManualClock()
+        let sampler = await makeSampler(
+            state: state,
+            provider: provider,
+            diskProvider: diskProvider,
+            interval: .seconds(1),
+            clock: clock
+        )
+
+        await sampler.refreshDisk()
+
+        #expect(await sampler.isRunning == false)
+        #expect(diskProvider.capacityCallCount == 0)
+        #expect(clock.sleepCount == 0)
+        #expect(await state.disk == nil)
+        #expect(await sampler.interval == .seconds(1))
+    }
+
     // disk-metrics — DM-8 "Unchanged interval keeps the baseline": no restart,
     // so the running loop keeps the step it already has.
     @Test func applyingTheIntervalAlreadyInEffectKeepsTheDiskBaseline() async throws {

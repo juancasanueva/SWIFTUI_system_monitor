@@ -75,6 +75,13 @@ struct PanelViewTests {
         cardHeight(DiskCard(snapshot: snapshot))
     }
 
+    /// The disk card as the composition root hosts it: with a refresh action
+    /// injected, so the header renders its button.
+    @MainActor
+    private static func diskCardHeightWithRefreshButton(_ snapshot: DiskSnapshot?) -> CGFloat {
+        cardHeight(DiskCard(snapshot: snapshot).environment(\.refreshDisk, {}))
+    }
+
     @MainActor
     private static func networkCardHeight(for state: MetricsState) -> CGFloat {
         cardHeight(
@@ -197,6 +204,18 @@ struct PanelViewTests {
         let height = await Self.diskCardHeight(Self.diskSnapshot)
 
         #expect(height > 120, "the disk card lost its gauge, rows or throughput footer")
+    }
+
+    // disk-card — DC-8 with the manual "Refresh Disk" button: the button
+    // depends on the injected action only, so the skeleton and the filled card
+    // keep one height, and the button does not grow the header.
+    @Test func theRefreshButtonKeepsTheDiskCardHeightStable() async {
+        let withoutButton = await Self.diskCardHeight(Self.diskSnapshot)
+        let empty = await Self.diskCardHeightWithRefreshButton(nil)
+        let populated = await Self.diskCardHeightWithRefreshButton(Self.diskSnapshot)
+
+        #expect(empty == populated)
+        #expect(populated == withoutButton)
     }
 
     // disk-card — "Height is stable"

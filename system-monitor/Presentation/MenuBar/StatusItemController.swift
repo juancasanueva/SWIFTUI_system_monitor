@@ -39,6 +39,10 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     /// `openSettings`: the composition root owns the one window controller.
     private let openAbout: @MainActor () -> Void
 
+    /// The Disk card's manual capacity refresh, handed to every panel root
+    /// this controller builds. Optional: with none the card shows no button.
+    private let refreshDisk: (@MainActor () -> Void)?
+
     private let statusItem: NSStatusItem
     private let hostingView: PassthroughHostingView
     private let popover = NSPopover()
@@ -81,7 +85,8 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         panelObserver: (any PanelVisibilityObserver)? = nil,
         updater: (any AppUpdating)? = nil,
         openSettings: @escaping @MainActor () -> Void = {},
-        openAbout: @escaping @MainActor () -> Void = {}
+        openAbout: @escaping @MainActor () -> Void = {},
+        refreshDisk: (@MainActor () -> Void)? = nil
     ) {
         self.state = state
         self.settings = settings
@@ -90,12 +95,15 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         self.updater = updater
         self.openSettings = openSettings
         self.openAbout = openAbout
+        self.refreshDisk = refreshDisk
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         hostingView = PassthroughHostingView(
             rootView: StatusItemRootView(state: state, settings: settings)
         )
         // Uncapped until the first show measures the presenting screen.
-        hostingController = NSHostingController(rootView: PanelRootView(state: state))
+        hostingController = NSHostingController(
+            rootView: PanelRootView(state: state, refreshDisk: refreshDisk)
+        )
 
         // 1 Hz content updates must not rewrite Auto Layout constraints (PRD 6.5).
         hostingView.sizingOptions = []
@@ -185,8 +193,13 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     /// Same shape as `measuredContentWidth(for:)`: the live hosting controller
     /// is inside a popover and reports the size it was given, not the size its
     /// content wants, so the question is asked of a fresh view instead.
-    private static func measuredPanelHeight(for state: MetricsState) -> CGFloat {
-        let measurementView = NSHostingView(rootView: PanelRootView(state: state))
+    private static func measuredPanelHeight(
+        for state: MetricsState,
+        refreshDisk: (@MainActor () -> Void)?
+    ) -> CGFloat {
+        let measurementView = NSHostingView(
+            rootView: PanelRootView(state: state, refreshDisk: refreshDisk)
+        )
         measurementView.layoutSubtreeIfNeeded()
         return measurementView.fittingSize.height
     }
@@ -200,10 +213,11 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     /// happens on a 14" one.
     static func panelMaxHeight(
         for state: MetricsState,
-        visibleFrameHeight: CGFloat
+        visibleFrameHeight: CGFloat,
+        refreshDisk: (@MainActor () -> Void)? = nil
     ) -> CGFloat? {
         PanelLayout.maxHeight(
-            fitting: measuredPanelHeight(for: state),
+            fitting: measuredPanelHeight(for: state, refreshDisk: refreshDisk),
             visibleFrameHeight: visibleFrameHeight
         )
     }
@@ -223,8 +237,13 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         hostingController.rootView = PanelRootView(
             state: state,
             maxHeight: visibleFrameHeight.flatMap {
-                Self.panelMaxHeight(for: state, visibleFrameHeight: $0)
-            }
+                Self.panelMaxHeight(
+                    for: state,
+                    visibleFrameHeight: $0,
+                    refreshDisk: refreshDisk
+                )
+            },
+            refreshDisk: refreshDisk
         )
     }
 

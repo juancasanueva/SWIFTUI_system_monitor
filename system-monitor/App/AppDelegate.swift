@@ -91,7 +91,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             panelObserver: cadence,
             updater: updater,
             openSettings: { [settingsWindow] in settingsWindow.show() },
-            openAbout: { [aboutWindow] in aboutWindow.show() }
+            openAbout: { [aboutWindow] in aboutWindow.show() },
+            refreshDisk: { [weak sampler] in sampler?.refreshDisk() }
         )
 
         self.state = state

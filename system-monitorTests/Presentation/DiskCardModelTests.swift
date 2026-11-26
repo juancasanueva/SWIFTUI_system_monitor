@@ -87,6 +87,17 @@ struct DiskCardModelTests {
         #expect(image != nil, "\(DiskCardModel.headerSymbolName) is not an SF Symbol on this SDK")
     }
 
+    // Manual "Refresh Disk" button glyph.
+    @Test func theRefreshSymbolResolvesAsAnSFSymbol() {
+        let image = NSImage(
+            systemSymbolName: DiskCardModel.refreshSymbolName,
+            accessibilityDescription: "Refresh Disk"
+        )
+
+        #expect(DiskCardModel.refreshSymbolName == "arrow.clockwise")
+        #expect(image != nil, "\(DiskCardModel.refreshSymbolName) is not an SF Symbol on this SDK")
+    }
+
     // MARK: - DC-4 Key/value rows
 
     // disk-card — "Three rows"

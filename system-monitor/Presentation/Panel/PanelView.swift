@@ -106,9 +106,13 @@ struct PanelRootView: View {
     /// Resolved by `StatusItemController` from the presenting screen (NC-12).
     var maxHeight: CGFloat? = nil
 
+    /// The Disk card's manual refresh, or `nil` to render no refresh button.
+    var refreshDisk: (@MainActor () -> Void)? = nil
+
     var body: some View {
         PanelView(maxHeight: maxHeight)
             .environment(state)
+            .environment(\.refreshDisk, refreshDisk)
     }
 }
 

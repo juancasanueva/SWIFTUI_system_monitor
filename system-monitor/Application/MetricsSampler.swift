@@ -382,6 +382,24 @@ final class MetricsSampler {
         start()
     }
 
+    /// Re-reads disk capacity now rather than at the next capacity cadence
+    /// (the panel's "Refresh Disk" button).
+    ///
+    /// A stopped sampler stays stopped and reads nothing: refreshing is not a
+    /// way to start sampling. A running loop is restarted exactly as
+    /// `apply(interval:)` restarts it, with the interval left untouched, so the
+    /// fresh `DiskSamplingStep` re-reads capacity on its first iteration
+    /// regardless of `DiskCapacityCadence` (DM-8). Reusing that restart rather
+    /// than reaching into the detached task's step also carries its price: one
+    /// iteration publishes no CPU snapshot and publishes disk and network with
+    /// both rates `nil`, the same single degraded tick an interval change costs.
+    func refreshDisk() {
+        guard isRunning else { return }
+
+        stop()
+        start()
+    }
+
     /// Cancels the sampling loop. Calling it while stopped does nothing.
     func stop() {
         task?.cancel()

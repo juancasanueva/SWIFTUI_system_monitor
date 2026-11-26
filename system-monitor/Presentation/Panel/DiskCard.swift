@@ -38,6 +38,10 @@ nonisolated enum DiskCardModel {
     /// Header glyph, resolved as an SF Symbol by the DC-3 test.
     static let headerSymbolName = "internaldrive"
 
+    /// Glyph of the header's "Refresh Disk" button, resolved as an SF Symbol
+    /// by its own test.
+    static let refreshSymbolName = "arrow.clockwise"
+
     /// Footer glyphs. Read points down like a download, write points up, so
     /// the direction is legible without reading the label (design decision 6).
     static let readSymbolName = "arrow.down.doc"
@@ -151,23 +155,39 @@ nonisolated enum DiskCardModel {
     }
 }
 
+extension EnvironmentValues {
+    /// Forces an immediate disk capacity re-read, or `nil` when the host did
+    /// not inject one.
+    ///
+    /// Absent means the Disk card renders no refresh button at all — previews
+    /// and tests never show a control that does nothing. The composition root
+    /// supplies `MetricsSampler.refreshDisk()` through `PanelRootView`.
+    @Entry var refreshDisk: (@MainActor () -> Void)?
+}
+
 /// The Disk detail card inside the popover (PRD F10, 7.3).
 ///
 /// Presentational: it reads nothing from the environment beyond the reduce
-/// motion preference, so a preview or a test can render it from fixed inputs.
+/// motion preference and the optional `refreshDisk` action, so a preview or a
+/// test can render it from fixed inputs.
 /// The vertical order comes from `DiskCardModel.sections`, and there is no
 /// history graph and no stacked bar (R10.8).
 ///
 /// The view tree is identical for a `nil` and a populated snapshot — no
 /// conditional views, single-line texts of the same size — so the skeleton and
 /// the filled card occupy the same height by construction (DC-8) and the
-/// popover never resizes when the first reading lands.
+/// popover never resizes when the first reading lands. The refresh button
+/// depends only on the injected action, never on the snapshot, so it does not
+/// break that invariant.
 struct DiskCard: View {
 
     /// Latest reading, `nil` before the first capacity read lands.
     let snapshot: DiskSnapshot?
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// Manual capacity refresh; the button is only rendered when injected.
+    @Environment(\.refreshDisk) private var refreshDisk
 
     /// Chrome shared with the CPU and memory cards (DC-9). Internal and
     /// `nonisolated` so the parity is pinned as values by a non-main-actor
@@ -208,13 +228,31 @@ struct DiskCard: View {
 
     private var header: some View {
         HStack(spacing: Self.headerSpacing) {
-            Image(systemName: DiskCardModel.headerSymbolName)
-                .foregroundStyle(Palette.diskAccent)
-            Text("Disk")
-                .font(.system(size: Self.headerFontSize, weight: .semibold))
-                .foregroundStyle(Palette.textPrimary)
+            // Grouped so the header trait stays on the title and never reaches
+            // the refresh button.
+            HStack(spacing: Self.headerSpacing) {
+                Image(systemName: DiskCardModel.headerSymbolName)
+                    .foregroundStyle(Palette.diskAccent)
+                Text("Disk")
+                    .font(.system(size: Self.headerFontSize, weight: .semibold))
+                    .foregroundStyle(Palette.textPrimary)
+            }
+            .accessibilityAddTraits(.isHeader)
+
+            if let refreshDisk {
+                Spacer(minLength: 0)
+                Button {
+                    refreshDisk()
+                } label: {
+                    Image(systemName: DiskCardModel.refreshSymbolName)
+                        .font(.system(size: Self.headerFontSize))
+                        .foregroundStyle(Palette.textSecondary)
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Refresh Disk")
+                .help("Refresh Disk")
+            }
         }
-        .accessibilityAddTraits(.isHeader)
     }
 
     private var gaugeAndRows: some View {
@@ -260,6 +298,21 @@ struct DiskCard: View {
             writeBytesPerSecond: 2_200_000
         )
     )
+    .padding(12)
+    .frame(width: 320)
+    .background(Palette.panelBackground)
+}
+
+#Preview("Disk card — with refresh button") {
+    DiskCard(
+        snapshot: DiskSnapshot(
+            total: 494_354_000_000,
+            free: 62_286_000_000,
+            readBytesPerSecond: 27_100_000,
+            writeBytesPerSecond: 2_200_000
+        )
+    )
+    .environment(\.refreshDisk, {})
     .padding(12)
     .frame(width: 320)
     .background(Palette.panelBackground)

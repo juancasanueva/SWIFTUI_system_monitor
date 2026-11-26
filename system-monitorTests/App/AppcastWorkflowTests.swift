@@ -63,10 +63,43 @@ nonisolated enum AppcastWorkflowSources {
     /// it — so "the file contains `contents: write`" would be satisfied by the
     /// workflow-level line while the job silently ran without it.
     static func releaseJobHeader(in workflow: String) throws -> String {
-        let start = try #require(workflow.range(of: "\n  release:\n"))
-        let rest = workflow[start.upperBound...]
-        let end = try #require(rest.range(of: "\n    steps:"))
-        return String(rest[rest.startIndex..<end.lowerBound])
+        try jobHeader(named: "release", in: workflow)
+    }
+
+    /// One job's body: every line after its `  <name>:` key, up to the next line
+    /// indented by exactly two spaces (the next job, or the comment above it) or
+    /// the end of the file.
+    ///
+    /// Scoped for the same reason as the header: the workflow now has two jobs,
+    /// and "the file contains `actions/deploy-pages`" says nothing about which
+    /// of them deploys.
+    static func job(named name: String, in workflow: String) throws -> String {
+        let lines = workflow.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        let start = try #require(lines.firstIndex(of: "  \(name):"), "no job named \(name)")
+        var body: [String] = []
+        for line in lines[(start + 1)...] {
+            let isNextJobLevelLine = line.hasPrefix("  ") && !line.hasPrefix("   ")
+            let isTopLevelLine = !line.isEmpty && !line.hasPrefix(" ")
+            if isNextJobLevelLine || isTopLevelLine { break }
+            body.append(line)
+        }
+        return body.joined(separator: "\n")
+    }
+
+    /// One job's header: everything it declares before its steps.
+    static func jobHeader(named name: String, in workflow: String) throws -> String {
+        let body = try job(named: name, in: workflow)
+        let end = try #require(body.range(of: "\n    steps:"), "job \(name) declares no steps")
+        return String(body[body.startIndex..<end.lowerBound])
+    }
+
+    /// The lines of a job header's `permissions:` block, trimmed.
+    static func permissions(inHeader header: String) -> [String] {
+        let lines = header.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        guard let start = lines.firstIndex(of: "    permissions:") else { return [] }
+        return lines[(start + 1)...]
+            .prefix { $0.hasPrefix("      ") }
+            .map { $0.trimmingCharacters(in: .whitespaces) }
     }
 
     /// The step whose `run:` line is exactly `line`.
@@ -114,7 +147,7 @@ struct AppcastWorkflowTests {
         "- name: Build the appcast",
         "actions/configure-pages",
         "actions/upload-pages-artifact",
-        "actions/deploy-pages"
+        "uses: actions/deploy-pages@"
     ]
 
     static let deployStepMarker = "- name: Deploy to Pages"
@@ -210,15 +243,37 @@ struct AppcastWorkflowTests {
     /// All seven, not just the first. The deploy step is the dangerous one: a
     /// prerelease that reached it with an empty artifact would replace the live
     /// site — Pages deploys are a full-site replacement — and blank the feed for
-    /// every installed copy.
+    /// every installed copy. The deploy is the one step of the `deploy-feed` job,
+    /// so its guard sits on that job and skips the whole of it.
     @Test("All seven publication steps carry the prerelease guard")
     func allSevenPublicationStepsCarryThePrereleaseGuard() throws {
-        let steps = AppcastWorkflowSources.steps(in: try AppcastWorkflowSources.workflow())
+        let workflow = try AppcastWorkflowSources.workflow()
+        // Steps are split per job, so the release job's last step cannot run on
+        // into the deploy-feed job and borrow its guard or its comments.
+        let releaseSteps = AppcastWorkflowSources.steps(
+            in: try AppcastWorkflowSources.job(named: "release", in: workflow)
+        )
+        let deploySteps = AppcastWorkflowSources.steps(
+            in: try AppcastWorkflowSources.job(named: "deploy-feed", in: workflow)
+        )
+        let deployJob = try AppcastWorkflowSources.jobHeader(named: "deploy-feed", in: workflow)
+        let jobGuard = "    \(Self.prereleaseGuard)"
 
         var guarded = 0
         for marker in Self.publicationMarkers {
-            let step = try #require(steps.first { $0.contains(marker) }, "no step runs \(marker)")
-            #expect(step.contains(Self.prereleaseGuard), "\(marker) is not guarded")
+            let step = try #require(
+                (releaseSteps + deploySteps).first { $0.contains(marker) },
+                "no step runs \(marker)"
+            )
+            if deploySteps.contains(step) {
+                #expect(step.contains(Self.deployStepMarker), "\(marker) is not the deploy step")
+                #expect(
+                    deployJob.split(separator: "\n").contains { $0 == jobGuard },
+                    "\(marker) is not guarded by its job"
+                )
+            } else {
+                #expect(step.contains(Self.prereleaseGuard), "\(marker) is not guarded")
+            }
             guarded += 1
         }
         #expect(guarded == 7)
@@ -232,7 +287,10 @@ struct AppcastWorkflowTests {
     /// block replaces the workflow-level one rather than extending it, so
     /// omitting it here would silently strip `gh release create` of its token —
     /// a failure that appears only on a real tag, after Apple has already been
-    /// asked for a notarization round trip.
+    /// asked for a notarization round trip. `pages: write` lets the
+    /// distinct-commit gate read a commit's Pages deployment; `id-token: write`
+    /// and the environment stay so this job keeps running exactly as it did
+    /// before the deploy moved to `deploy-feed`.
     @Test("The release job declares the Pages permissions and environment")
     func theReleaseJobDeclaresThePagesPermissionsAndEnvironment() throws {
         let header = try AppcastWorkflowSources.releaseJobHeader(in: try AppcastWorkflowSources.workflow())
@@ -361,21 +419,79 @@ struct AppcastWorkflowTests {
         #expect(!AppcastWorkflowSources.invokes("git", in: step))
     }
 
-    /// The deploy step keeps its place in the job.
+    /// The feed deploys in its own job, after the release job.
     ///
-    /// It must come after the upload, whose artifact it deploys, and before the
-    /// `if: always()` cleanup that destroys the keychain and the API key — so a
-    /// deployment that takes its full ten minutes never races the teardown.
-    @Test("The deploy step runs after the upload and before the keychain cleanup")
-    func theDeployStepRunsAfterTheUploadAndBeforeTheKeychainCleanup() throws {
-        let steps = AppcastWorkflowSources.steps(in: try AppcastWorkflowSources.workflow())
+    /// Deploying in the job that uploads the site can look the artifact up before
+    /// GitHub lists it (actions/deploy-pages#451), and re-running that job then
+    /// uploads a second artifact the lookup also refuses. A later job sees the
+    /// one artifact the release job uploaded, and "Re-run failed jobs" re-runs
+    /// only the deploy. It holds no secret and needs no Mac.
+    @Test("The feed deploys in its own job after the release")
+    func theFeedDeploysInItsOwnJobAfterTheRelease() throws {
+        let workflow = try AppcastWorkflowSources.workflow()
+        let release = try AppcastWorkflowSources.job(named: "release", in: workflow)
+        let deploy = try AppcastWorkflowSources.job(named: "deploy-feed", in: workflow)
+        let header = try AppcastWorkflowSources.jobHeader(named: "deploy-feed", in: workflow)
+        let headerLines = header.split(separator: "\n").map(String.init)
+
+        #expect(release.contains("uses: actions/upload-pages-artifact@"))
+        #expect(!release.contains("uses: actions/deploy-pages@"))
+        #expect(!release.contains(Self.deployStepMarker))
+
+        let steps = AppcastWorkflowSources.steps(in: deploy)
+        #expect(steps.count == 1)
+        #expect(steps.first?.contains(Self.deployStepMarker) == true)
+        #expect(steps.first?.contains("uses: actions/deploy-pages@") == true)
+
+        for line in [
+            "    needs: release",
+            "    \(Self.prereleaseGuard)",
+            "    runs-on: ubuntu-latest",
+            "    environment: github-pages"
+        ] {
+            #expect(headerLines.contains(line), "deploy-feed must declare: \(line)")
+        }
+        #expect(!deploy.contains("secrets."))
+    }
+
+    /// The deploy job holds only what a Pages deployment needs.
+    ///
+    /// Its job-level block replaces the workflow-level `contents: write`, so the
+    /// job that publishes nothing but the feed cannot write a release.
+    /// `pages: write` authorizes the deployment and `id-token: write` mints the
+    /// OIDC token it must present.
+    @Test("The deploy-feed job declares only the Pages permissions")
+    func theDeployFeedJobDeclaresOnlyThePagesPermissions() throws {
+        let header = try AppcastWorkflowSources.jobHeader(
+            named: "deploy-feed", in: try AppcastWorkflowSources.workflow()
+        )
+
+        #expect(AppcastWorkflowSources.permissions(inHeader: header) == [
+            "contents: read",
+            "pages: write",
+            "id-token: write"
+        ])
+    }
+
+    /// The upload precedes the keychain cleanup, and the deploy waits for both.
+    ///
+    /// The upload must come before the `if: always()` cleanup that destroys the
+    /// keychain and the API key, in the same job. The deploy is no longer a step
+    /// of that job: `deploy-feed` needs the release job, so it starts only after
+    /// the teardown has run, and a deployment that takes its full ten minutes
+    /// never races it.
+    @Test("The upload runs before the keychain cleanup, and the deploy after the release job")
+    func theUploadRunsBeforeTheKeychainCleanupAndTheDeployAfterTheReleaseJob() throws {
+        let workflow = try AppcastWorkflowSources.workflow()
+        let steps = AppcastWorkflowSources.steps(in: try AppcastWorkflowSources.job(named: "release", in: workflow))
 
         let upload = try #require(steps.firstIndex { $0.contains("actions/upload-pages-artifact") })
-        let deploy = try #require(steps.firstIndex { $0.contains(Self.deployStepMarker) })
         let cleanup = try #require(steps.firstIndex { $0.contains("security delete-keychain") })
+        #expect(upload < cleanup)
+        #expect(!steps.contains { $0.contains(Self.deployStepMarker) })
 
-        #expect(upload < deploy)
-        #expect(deploy < cleanup)
+        let header = try AppcastWorkflowSources.jobHeader(named: "deploy-feed", in: workflow)
+        #expect(header.split(separator: "\n").contains { $0 == "    needs: release" })
     }
 
     // MARK: - Supply chain

@@ -608,6 +608,41 @@ struct ReleaseWorkflowContractTests {
         #expect(cleanup.allSatisfy { $0.contains("asc.p8") })
     }
 
+    // MARK: - Two jobs, and only one of them holds the credentials
+
+    /// The workflow has exactly two jobs: `release`, which builds, signs,
+    /// notarizes, publishes and uploads the site on a Mac, and `deploy-feed`,
+    /// which only deploys that site.
+    ///
+    /// The deploy moved out of the release job because, in the same job,
+    /// `actions/deploy-pages` could look the artifact up too soon
+    /// (actions/deploy-pages#451). Moving it must not move a credential with it:
+    /// the second job runs on Ubuntu, after the release job, and references no
+    /// secret and no keychain. A third job would be a new place for a credential
+    /// to land, so the set is pinned.
+    @Test("The workflow runs the release on a Mac, then a secret-free deploy-feed job")
+    func theWorkflowRunsTheReleaseThenASecretFreeDeployFeedJob() throws {
+        let workflow = try ReleasePipelineSources.text(ReleasePipelineSources.workflowPath)
+        let jobs = try #require(ReleasePipelineSources.topLevelBlock(named: "jobs", in: workflow))
+        let lines = jobs.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+
+        let names = lines.filter { line in
+            line.hasPrefix("  ") && !line.hasPrefix("   ") && !line.hasPrefix("  #") && line.hasSuffix(":")
+        }
+        #expect(names == ["  release:", "  deploy-feed:"])
+
+        let start = try #require(jobs.range(of: "\n  deploy-feed:\n"))
+        let release = String(jobs[jobs.startIndex..<start.lowerBound])
+        let deploy = String(jobs[start.upperBound...])
+
+        #expect(release.contains("    runs-on: macos-26\n"))
+        #expect(deploy.contains("    runs-on: ubuntu-latest\n"))
+        #expect(deploy.contains("    needs: release\n"))
+        #expect(!deploy.contains("secrets."))
+        #expect(!deploy.contains("keychain"))
+        #expect(ReleasePipelineSources.commandInvocations(of: "gh", in: deploy).isEmpty)
+    }
+
     // MARK: - Secrets appear only as env bindings
 
     /// A secret interpolated into a `run:` line is echoed into the step header of

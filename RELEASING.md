@@ -66,12 +66,12 @@ None of these block merging the pipeline. All of them block the first release.
    every installed copy reads.
 
    The `github-pages` deployment environment must also allow the refs the
-   release job runs on. It is created with a **branch** policy, and this job
-   runs on **tag** refs (`v*`), so a deployment from a tag is rejected until a
-   tag rule is added: Settings → Environments → `github-pages` → Deployment
-   branches and tags → add a **tag** rule matching `v*`. Without it the four
-   publication steps run and the deploy step fails at the end of an otherwise
-   successful release.
+   workflow runs on. It is created with a **branch** policy, and both jobs run
+   on **tag** refs (`v*`), so a deployment from a tag is rejected until a tag
+   rule is added: Settings → Environments → `github-pages` → Deployment
+   branches and tags → add a **tag** rule matching `v*`. Both jobs target that
+   environment, so without the `v*` tag rule GitHub refuses the release job
+   before it starts.
 7. **The Sparkle EdDSA key pair.**
 
    **System Monitor shares the existing key pair with Home-Cellar.** The public
@@ -133,8 +133,8 @@ Then watch the run under the repository's Actions tab. The stages, in order:
 | Publish | `gh release create --verify-tag --generate-notes` | — |
 | Build the appcast | Reads the pre-fetched feed and tools (never downloads either again), signs the zip and writes the whole feed to a directory outside the checkout | The pre-fetched feed or tools are missing, or signing or emission fails (stable tags only) |
 | Configure Pages / Upload | Uploads that directory as the `github-pages` artifact | — |
-| Deploy to Pages | `actions/deploy-pages`, which deploys the artifact under this commit as its build version | The deployment reports a failure state, or its 10 minutes elapse |
 | Cleanup | Deletes the keychain and the API key, always | — |
+| Deploy to Pages | A second job, `deploy-feed`, on an Ubuntu runner after the release job: `actions/deploy-pages`, which deploys the artifact under this commit as its build version (stable tags only) | The deployment reports a failure state, or its 10 minutes elapse |
 
 **Every stable release must be cut from its own commit.** GitHub Pages keys a
 deployment by its *build version*, and the deployments API accepts only a build
@@ -196,15 +196,25 @@ git push --delete origin v1.0.0
 git tag -d v1.0.0
 ```
 
-**After Publish** (Build the appcast, Configure Pages, Upload, Deploy): none of
-them downloads anything any more, so what fails here is signing (a wrong or
-missing `SPARKLE_PRIVATE_KEY`, a signing-tool output the script refuses),
-emission, or the Pages upload and deployment. The GitHub release and its zip
+**Only the `deploy-feed` job failed** (Deploy to Pages): the release and the
+site artifact exist, and the feed is the one step missing. Use **Re-run failed
+jobs**: it re-runs only `deploy-feed`, against the artifact the release job
+uploaded, and needs no release deletion. Do that within a day, while the
+artifact is kept, and only if no later tag has run since: the artifact is the
+feed as this release built it, so deploying it after a newer one would drop the
+newer item. Otherwise cut the next patch (option 1 below).
+
+**After Publish, in the release job** (Build the appcast, Configure Pages,
+Upload): none of them downloads anything any more, so what fails here is signing
+(a wrong or missing `SPARKLE_PRIVATE_KEY`, a signing-tool output the script
+refuses), emission, or the Pages upload. The GitHub release and its zip
 **already exist** and are `releases/latest`, but the feed was not updated, so no
 installed copy is offered the version. The Homebrew tap's scheduled bump (§8), or
 anyone browsing the releases page, may already have picked it up. There is no
-step-level retry: **Re-run failed jobs** re-runs the whole job, which stops at
-Publish because the release for that tag already exists. Pick one:
+step-level retry: **Re-run failed jobs** re-runs the whole release job, which
+stops at Publish because the release for that tag already exists. Never **Re-run
+all jobs** once the site was uploaded: a second `github-pages` artifact in the
+run makes the deploy fail. Pick one:
 
 1. **Cut the next patch version (preferred).** Leave the release as it is, fix
    the cause on a new commit, and tag `v1.0.1` there. Its run publishes `v1.0.1`
@@ -212,9 +222,10 @@ Publish because the release for that tag already exists. Pick one:
    item. Nothing already seen is withdrawn.
 2. **Delete the release and re-run, when the cause was outside the repository**
    (a transient network or Pages failure, the `github-pages` tag rule, a
-   secret). Delete only the release, keep the tag, then **Re-run failed jobs**.
-   The re-run uses the same tag, commit, workflow file and run number (so the
-   same build number), and notarizes again:
+   secret). Delete only the release, keep the tag, then **Re-run failed jobs**,
+   which runs the release job and then `deploy-feed`. The re-run uses the same
+   tag, commit, workflow file and run number (so the same build number), and
+   notarizes again:
 
    ```sh
    gh release delete v1.0.0 --repo juancasanueva/SWIFTUI_system_monitor --yes
@@ -236,14 +247,24 @@ Publish because the release for that tag already exists. Pick one:
 
 Options 2 and 3 carry the same risk: between the first publish and the deletion,
 clients may have seen `v1.0.0`. They are only safe because the feed never
-pointed at it. If the Deploy step itself started and failed, the deployments API
-can report a non-empty status for the commit, and the distinct-commit gate then
-refuses any re-run or re-tag on it: use option 1. Once a run *has* deployed the
-feed, that commit is spent; the next version needs a new commit.
+pointed at it. If the deploy itself started and failed, the deployments API can
+report a non-empty status for the commit, and the distinct-commit gate then
+refuses any re-run of the release job or re-tag on it: re-run `deploy-feed`
+alone, as above, or use option 1. Once a run *has* deployed the feed, that
+commit is spent; the next version needs a new commit.
+
+The deploy used to be the last step of the release job, where it could look
+the site artifact up before GitHub listed it and fail with "No artifacts named
+"github-pages" were found" (actions/deploy-pages#451). Re-running that job
+uploaded a second artifact to the run, and the deploy then refused both
+("Multiple artifacts named "github-pages" were unexpectedly found"). v1.0.4 was
+published that way without reaching the feed, which is why the deploy is now its
+own job. A run started before this change re-runs the workflow file it started
+with, so re-running it does not pick up the new job: cut the next patch instead.
 
 `scripts/appcast.sh` can be run locally (§5) to reproduce an appcast failure and
-inspect the feed it would emit, but it does not deploy. The release job is the
-only path to Pages.
+inspect the feed it would emit, but it does not deploy. The workflow's
+`deploy-feed` job is the only path to Pages.
 
 **Never delete or unflag a release the feed points at.** Once a version has a
 feed item, installed copies may already be updating to its asset, and unflagging
@@ -394,7 +415,7 @@ may change without a coordinated change there:
 | Version stamping | `CFBundleShortVersionString` = tag minus `v`; `CFBundleVersion` = run number, strictly increasing |
 | Signature | Developer ID Application, team `Z3S5JK8E38`, hardened runtime, notarized and stapled |
 | Floor | macOS 15.0, Apple Silicon (`arm64` only) for the app executable; the embedded `Sparkle.framework` is universal, which does not change the floor |
-| Update feed | `https://juancasanueva.github.io/SWIFTUI_system_monitor/appcast.xml`, republished by the same job on every **stable** tag; a prerelease publishes a release and no feed entry |
+| Update feed | `https://juancasanueva.github.io/SWIFTUI_system_monitor/appcast.xml`, republished by the same workflow on every **stable** tag; a prerelease publishes a release and no feed entry |
 
 The feed's minimum system version is emitted by `scripts/appcast.sh` as
 `MINIMUM_SYSTEM_VERSION="15.0"` and required by the offline validator as
@@ -409,11 +430,12 @@ seven-secret set closed and keeps a successful, notarized release from being
 reported as a failure because of a channel that is not on the critical path.
 
 **A Pages deploy is a full-site replacement.** A Pages deployment serves
-whatever the uploaded artifact contains and nothing else, so the release job is
-the *only* thing that may deploy to Pages. If a landing page is ever wanted, it
-must be built by this same job into the same artifact directory; a second
-workflow deploying a site would silently overwrite `appcast.xml` and every
-installed copy would stop finding updates.
+whatever the uploaded artifact contains and nothing else, so this workflow's
+`deploy-feed` job is the *only* thing that may deploy to Pages, and only the
+artifact the release job uploaded. If a landing page is ever wanted, it must be
+built by the release job into the same artifact directory; a second workflow
+deploying a site would silently overwrite `appcast.xml` and every installed copy
+would stop finding updates.
 
 ## 8. The Homebrew tap
 

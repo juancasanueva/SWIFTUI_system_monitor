@@ -26,9 +26,9 @@ jobs:
     # rather than extending it, so `contents: write` is restated here or
     # `gh release create` silently loses its token — a failure that would only
     # appear on a real tag, after Apple had already been asked for a
-    # notarization round trip. `pages: write` authorizes the Pages deployment
-    # and `id-token: write` is what mints the OIDC token that deployment must
-    # present.
+    # notarization round trip. `pages: write` lets the gate below read a
+    # commit's Pages deployment; `id-token: write` and the environment stay so
+    # this job keeps running exactly as it did before the deploy moved out.
     permissions:
       contents: write
       pages: write
@@ -236,18 +236,37 @@ jobs:
         with:
           path: ${{ runner.temp }}/site
 
-      # `actions/deploy-pages` sends the commit SHA as the build version and
-      # exposes no input to change it — which is exactly right: the deployments
-      # API accepts *only* a build version that is a commit in this repository.
-      # A `<sha>-<run>` string is rejected with a 404, and that rejection lands
-      # after the release has already been published. The step upstream is what
-      # guarantees this commit has not deployed before.
-      - name: Deploy to Pages
-        if: ${{ !contains(github.ref_name, '-') }}
-        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
-
       - name: Delete the ephemeral keychain and the API key
         if: always()
         run: |
           security delete-keychain "$RUNNER_TEMP/system-monitor-release.keychain-db" 2>/dev/null || true
           rm -f "$RUNNER_TEMP/asc.p8" "$RUNNER_TEMP/cert.p12"
+
+  # The deploy is its own job, not a step after the upload. In the same job,
+  # deploy-pages can look the artifact up a moment after it was finalized and
+  # find nothing ("No artifacts named "github-pages" were found",
+  # actions/deploy-pages#451), and re-running that job uploads a second artifact
+  # to the run, which the lookup also refuses. Here the lookup happens after a
+  # new job has started, and "Re-run failed jobs" re-runs only this job, against
+  # the one artifact the release job uploaded. It holds no secret and needs no
+  # Mac.
+  deploy-feed:
+    needs: release
+    if: ${{ !contains(github.ref_name, '-') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment: github-pages
+    steps:
+      # `actions/deploy-pages` sends the commit SHA as the build version and
+      # exposes no input to change it — which is exactly right: the deployments
+      # API accepts *only* a build version that is a commit in this repository.
+      # A `<sha>-<run>` string is rejected with a 404, and that rejection lands
+      # after the release has already been published. The release job's
+      # distinct-commit gate is what guarantees this commit has not deployed
+      # before.
+      - name: Deploy to Pages
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

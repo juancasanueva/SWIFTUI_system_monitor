@@ -31,6 +31,12 @@ private final class StatusItemReleaseProbe {
         return self.controller != nil && self.statusItem != nil
     }
 
+    /// The controller has no deferred owner: its last reference is dropped on
+    /// the main actor, so its `isolated deinit` — the removal — runs inline.
+    var isControllerReleased: Bool {
+        controller == nil
+    }
+
     var isFullyReleased: Bool {
         controller == nil && statusItem == nil
     }
@@ -324,13 +330,16 @@ struct StatusItemControllerTests {
         let probe = await StatusItemReleaseProbe()
 
         let wasLive = await probe.buildAndRelease()
-        // One main-actor turn so an `isolated deinit` scheduled from the
-        // release has run before the references are read.
-        await MainActor.run {}
-        let released = await probe.isFullyReleased
+        // Read once, with no wait: the last reference was dropped on the main
+        // actor, so the `isolated deinit` that removes the item ran inline.
+        let controllerReleased = await probe.isControllerReleased
+        // AppKit drops its own references to a removed item a few run-loop
+        // passes later, so the item is awaited rather than read once.
+        let released = await awaitRelease { probe.isFullyReleased }
 
         #expect(wasLive, "the probe never held a live controller and status item")
-        #expect(released, "the controller or its status item outlived the last reference")
+        #expect(controllerReleased, "the controller outlived its last reference")
+        #expect(released, "the status item outlived its controller")
     }
 
     // MARK: - Panel transitions (MBW-13)

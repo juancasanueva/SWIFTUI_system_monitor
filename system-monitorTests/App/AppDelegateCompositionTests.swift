@@ -47,6 +47,13 @@ private final class LaunchReleaseProbe {
         return live
     }
 
+    /// Nothing in the graph owns the controller but the delegate, and the
+    /// delegate is dropped on the main actor, so the controller's
+    /// `isolated deinit` — the removal — has run by the time this is read.
+    var isControllerReleased: Bool {
+        controller == nil
+    }
+
     var isFullyReleased: Bool {
         controller == nil && statusItem == nil
     }
@@ -379,11 +386,14 @@ struct AppDelegateCompositionTests {
     @Test func releasingTheDelegateRemovesTheStatusItem() async {
         let probe = await LaunchReleaseProbe()
         let live = await probe.launchAndRelease()
-
-        await MainActor.run {}
+        let controllerReleased = await probe.isControllerReleased
+        // AppKit releases a removed item a few run-loop passes after the
+        // removal, so the item is awaited rather than read once (MBW-12).
+        let released = await awaitRelease { probe.isFullyReleased }
 
         #expect(live, "the probe must have held a live controller and status item")
-        #expect(await probe.isFullyReleased)
+        #expect(controllerReleased, "dropping the delegate must drop its status item controller")
+        #expect(released, "the status item outlived its controller")
     }
 
     // MARK: - Disk provider (DM-14)

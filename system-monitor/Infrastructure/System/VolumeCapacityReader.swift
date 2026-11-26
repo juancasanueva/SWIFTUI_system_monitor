@@ -58,10 +58,18 @@ nonisolated struct VolumeCapacityReader: Sendable {
     }
 
     /// Reads both capacity values from the volume in one call.
+    ///
+    /// `URL` caches resource values and only purges that cache on a run loop
+    /// turn. The sampler calls this from a detached task, which has no run loop,
+    /// so reusing `volumeURL` would return the first reading forever. Every read
+    /// therefore starts from a copy whose cache has been cleared.
     func read() throws -> VolumeCapacity {
+        var url = volumeURL
+        url.removeAllCachedResourceValues()
+
         let values: URLResourceValues
         do {
-            values = try volumeURL.resourceValues(forKeys: Self.keys)
+            values = try url.resourceValues(forKeys: Self.keys)
         } catch {
             let error = error as NSError
             throw ReadError.resourceValues(domain: error.domain, code: error.code)

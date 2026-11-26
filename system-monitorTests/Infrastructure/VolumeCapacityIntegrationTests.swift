@@ -45,6 +45,34 @@ struct VolumeCapacityIntegrationTests {
         #expect(second.free > 0)
     }
 
+    /// The sampler keeps one reader for the life of the app and calls it from a
+    /// detached task, where no run loop turn ever purges `URL`'s resource-value
+    /// cache. A reader that reused a cached value would report the free space of
+    /// its first read forever, so space freed or consumed later never showed.
+    @Test func aLaterReadObservesSpaceConsumedSinceTheFirstRead() throws {
+        let reader = VolumeCapacityReader()
+        let ballast = FileManager.default.temporaryDirectory
+            .appendingPathComponent("capacity-ballast-\(UUID().uuidString).bin")
+        let ballastBytes = 512 * 1_000_000
+
+        let before = try reader.read()
+
+        #expect(FileManager.default.createFile(atPath: ballast.path, contents: nil))
+        defer { try? FileManager.default.removeItem(at: ballast) }
+        let handle = try FileHandle(forWritingTo: ballast)
+        try handle.write(contentsOf: Data(count: ballastBytes))
+        try handle.synchronize()
+        try handle.close()
+
+        let after = try reader.read()
+
+        #expect(after.total == before.total)
+        #expect(
+            before.free > after.free && before.free - after.free >= UInt64(ballastBytes / 2),
+            "free space must drop after writing \(ballastBytes) bytes: before \(before.free), after \(after.free)"
+        )
+    }
+
     // disk-metrics — DM-13 "Provider delegates"
     @Test func theProviderDelegatesCapacityToTheComposedReader() throws {
         let reader = VolumeCapacityReader()
